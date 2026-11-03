@@ -38,9 +38,34 @@ namespace PimbaStage
         public Transform model;
         [Tooltip("Pool of light on the stage floor that follows the performer.")]
         public Transform floorSpot;
+        [Tooltip("Plays the character's frames; runs faster when moving.")]
+        public SpriteFrameAnimator animator;
+        [Tooltip("Tick if the character art looks the wrong way when running right.")]
+        public bool spriteFacesLeft;
+
+        [Header("Animations (Characters/PerformerIdle_*, Walk_*, Jump_*, Fall_*, Hurt_*)")]
+        [Tooltip("Standing still.")]
+        public Sprite[] idleFrames = new Sprite[0];
+        [Tooltip("Moving on the ground (plays faster the faster he runs).")]
+        public Sprite[] walkFrames = new Sprite[0];
+        [Tooltip("In the air, going up.")]
+        public Sprite[] jumpFrames = new Sprite[0];
+        [Tooltip("In the air, going down.")]
+        public Sprite[] fallFrames = new Sprite[0];
+        [Tooltip("Plays once when he gets damaged.")]
+        public Sprite[] hurtFrames = new Sprite[0];
+        [Tooltip("Frames per second (the idle GIF uses 170 ms per frame).")]
+        public float idleFps = 5.9f;
+        [Tooltip("Frames per second at walking pace (the walk GIF uses 170 ms per frame).")]
+        public float walkFps = 5.9f;
+        public float jumpFps = 10f;
+        [Tooltip("Frames per second (the hurt GIF uses 140 ms per frame).")]
+        public float hurtFps = 7.1f;
 
         public bool ControlsEnabled { get; set; }
         public bool Invulnerable => Time.time < invulnerableUntil;
+        /// <summary>True while the hurt animation is playing.</summary>
+        public bool Hurting => hurtFrames != null && hurtFrames.Length > 0 && Time.time < hurtUntil;
         public bool OnGround => onGround;
         public Rigidbody2D Body => rb;
         public float HalfWidth => col.bounds.extents.x;
@@ -57,7 +82,9 @@ namespace PimbaStage
         private bool jumpHeld, onGround, bouncing;
         private int facing = 1, airJumpsLeft;
         private float lastGroundedTime = -999f, lastJumpPressedTime = -999f, lastJumpTime = -999f;
-        private float lastVerticalSpeed, invulnerableUntil;
+        private float lastVerticalSpeed, invulnerableUntil, hurtUntil;
+        private Sprite[] defaultFrames;
+        private float defaultFps;
         private Vector2 carryVelocity;
         private Vector2 squash = Vector2.one;
 
@@ -79,6 +106,11 @@ namespace PimbaStage
             renderers = GetComponentsInChildren<SpriteRenderer>(true);
             baseOrders = new int[renderers.Length];
             for (int i = 0; i < renderers.Length; i++) baseOrders[i] = renderers[i].sortingOrder;
+            if (animator != null)
+            {
+                defaultFrames = animator.frames;
+                defaultFps = animator.framesPerSecond;
+            }
         }
 
         private void Update()
@@ -166,11 +198,14 @@ namespace PimbaStage
             if (model != null)
             {
                 squash = Vector2.Lerp(squash, Vector2.one, 12f * Time.deltaTime);
-                model.localScale = new Vector3(squash.x * facing, squash.y, 1f);
+                float flip = spriteFacesLeft ? -facing : facing;
+                model.localScale = new Vector3(squash.x * flip, squash.y, 1f);
             }
 
-            // Blink while invulnerable
-            bool visible = !Invulnerable || ((int)(Time.time * 14f)) % 2 == 0;
+            if (animator != null) Animate();
+
+            // Blink while invulnerable (not during the hurt animation, which flashes by itself)
+            bool visible = !Invulnerable || Hurting || ((int)(Time.time * 14f)) % 2 == 0;
             for (int i = 0; i < renderers.Length; i++)
                 if (renderers[i] != null) renderers[i].enabled = visible;
 
@@ -187,6 +222,65 @@ namespace PimbaStage
             {
                 Vector3 p = floorSpot.position;
                 floorSpot.position = new Vector3(transform.position.x, p.y, p.z);
+            }
+        }
+
+        /// <summary>Picks the animation for what the performer is doing: hurt, jump, fall, walk or idle.</summary>
+        private void Animate()
+        {
+            float run = Mathf.Abs(rb.linearVelocity.x - carryVelocity.x);
+            // A short grace time so a one-frame gap in the ground check doesn't flash the fall frames.
+            bool airborne = !onGround && Time.time - lastGroundedTime > 0.06f;
+            bool moving = run > 0.3f || Mathf.Abs(moveX) > 0.1f;
+
+            Sprite[] clip;
+            float fps, speed = 1f;
+            if (Hurting)
+            {
+                clip = hurtFrames;
+                fps = hurtFps;
+            }
+            else if (airborne)
+            {
+                bool rising = rb.linearVelocity.y > 0.1f;
+                clip = rising ? Either(jumpFrames, fallFrames) : Either(fallFrames, jumpFrames);
+                fps = jumpFps;
+            }
+            else if (moving)
+            {
+                clip = walkFrames;
+                fps = walkFps;
+                speed = Mathf.Lerp(0.8f, 1.5f, run / Mathf.Max(0.1f, maxSpeed));
+            }
+            else
+            {
+                clip = idleFrames;
+                fps = idleFps;
+            }
+
+            if (clip == null || clip.Length == 0)
+            {
+                // No art for this move: keep the one looping animation, sped up when moving.
+                clip = defaultFrames;
+                fps = defaultFps;
+                speed = airborne ? 1.4f : moving ? Mathf.Lerp(0.9f, 1.6f, run / Mathf.Max(0.1f, maxSpeed)) : 0.45f;
+            }
+            animator.SpeedMultiplier = speed;
+            animator.Play(clip, fps);
+        }
+
+        private static Sprite[] Either(Sprite[] first, Sprite[] second) =>
+            first != null && first.Length > 0 ? first : second;
+
+        /// <summary>Plays the hurt animation once (called by the game when the performer loses a heart).</summary>
+        public void PlayHurt()
+        {
+            if (hurtFrames == null || hurtFrames.Length == 0) return;
+            hurtUntil = Time.time + hurtFrames.Length / Mathf.Max(0.1f, hurtFps);
+            if (animator != null)
+            {
+                animator.SpeedMultiplier = 1f;
+                animator.Play(hurtFrames, hurtFps, true);
             }
         }
 

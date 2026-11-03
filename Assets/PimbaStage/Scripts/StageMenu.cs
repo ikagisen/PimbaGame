@@ -290,7 +290,7 @@ namespace PimbaStage
             {
                 string songName = song != null ? song.title : "-";
                 summaryText.text = "SONG: " + songName + "      PERFORMER: " + ((Difficulty)p1).ToString().ToUpperInvariant()
-                                 + "      MUSICIAN: " + ((Difficulty)p2).ToString().ToUpperInvariant();
+                                 + "      SINGER: " + ((Difficulty)p2).ToString().ToUpperInvariant();
             }
             RefreshVolume();
         }

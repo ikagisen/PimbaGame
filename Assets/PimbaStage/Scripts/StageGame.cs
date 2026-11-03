@@ -45,6 +45,10 @@ namespace PimbaStage
         public Text scoreText;
         public GameObject pausePanel;
         public GameObject resultsPanel;
+        [Tooltip("Background image of the results panel.")]
+        public Image resultsBackground;
+        [Tooltip("Background shown instead when the show is lost (BOOO!).")]
+        public Sprite loseBackground;
         public Text resultsTitle;
         public Text resultsBody;
         public RectTransform curtainLeft;
@@ -337,6 +341,7 @@ namespace PimbaStage
             hearts--;
             heartsLost++;
             UpdateHearts();
+            player.PlayHurt();
             if (hearts <= 0)
             {
                 Finish(false, "The performer ran out of hearts!");
@@ -375,10 +380,18 @@ namespace PimbaStage
             if (countdownText != null) countdownText.text = "";
 
             float accuracy = Accuracy(out _);
+            if (!success && resultsBackground != null && loseBackground != null)
+            {
+                resultsBackground.sprite = loseBackground;
+                resultsBackground.type = Image.Type.Simple;
+                resultsBackground.color = Color.white;
+            }
             if (resultsTitle != null)
             {
                 resultsTitle.text = success ? "BRAVO!" : "BOOO!";
-                resultsTitle.color = success ? new Color(1f, 0.84f, 0.2f) : new Color(1f, 0.4f, 0.35f);
+                // White reads better than red on the red lose background.
+                resultsTitle.color = success ? new Color(1f, 0.84f, 0.2f)
+                    : loseBackground != null ? Color.white : new Color(1f, 0.4f, 0.35f);
             }
             if (resultsBody != null)
             {
@@ -387,7 +400,7 @@ namespace PimbaStage
                     + "Amazing " + counts[0] + "   Good " + counts[1] + "   OK " + counts[2] + "   Bad " + counts[3] + "   Miss " + counts[4] + "\n"
                     + "Accuracy " + accuracy.ToString("0.0") + "%     Max combo " + lane.MaxCombo + "\n"
                     + "Roses " + roses + "/" + totalRoses + "     Hearts lost " + heartsLost + "\n"
-                    + "Performer " + GameSettings.PerformerDifficulty + "     Musician " + GameSettings.MusicianDifficulty + "\n";
+                    + "Performer " + GameSettings.PerformerDifficulty + "     Singer " + GameSettings.MusicianDifficulty + "\n";
                 if (chartPath != null) body += "\nChart saved: " + chartPath + "\n";
                 body += "\nENTER / R  play again        ESC  main menu";
                 resultsBody.text = body;

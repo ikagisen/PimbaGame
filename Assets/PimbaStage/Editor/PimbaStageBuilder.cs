@@ -25,6 +25,10 @@ namespace PimbaStage.EditorTools
         private const string MaterialPath = Root + "/PS_SpriteUnlit.mat";
         private const string DemoSongPath = SongFolder + "/Demo - Arraial na Aldeia.asset";
         private const string ButtonFolder = Root + "/UI";
+        private const string CharacterFolder = Root + "/Characters";
+        private const string Scene3DPath = SceneFolder + "/PimbaStage3D.unity";
+        // The performer's animation frames are 34x34 px; his body is centred on column 18, feet on the bottom row.
+        private static readonly Vector2 PerformerPivot = new Vector2(18f / 34f, 0f);
 
         private const int UILayer = 5;
         private const int IgnoreRaycastLayer = 2;
@@ -43,6 +47,8 @@ namespace PimbaStage.EditorTools
 
         private static Material spriteMat;
         private static Font font;
+        private static bool customFont;
+        private const string FontFolder = "Assets/PimbaStage/Fonts";
         private static Transform world;
         private static readonly List<DifficultyFilter> difficultyObjects = new List<DifficultyFilter>();
         private static Sprite sSquare, sCircle, sSoft, sTriangle, sArrow, sArrowOutline, sHeart, sCone, sCurtain, sValance,
@@ -57,6 +63,173 @@ namespace PimbaStage.EditorTools
                 return;
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
             BuildWithoutPrompts();
+        }
+
+        /// <summary>
+        /// Puts the red "lose" background (UI/Results_Lose.png) into the scene that is open now,
+        /// without rebuilding it, so any changes made in the scene are kept.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Update Lose Background (keeps scene edits)")]
+        public static void ApplyLoseBackground()
+        {
+            if (StopIfPlaying()) return;
+            StageGame game = null;
+            foreach (var root in SceneManager.GetActiveScene().GetRootGameObjects())
+            {
+                game = root.GetComponentInChildren<StageGame>(true);
+                if (game != null) break;
+            }
+            if (game == null)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Open the PimbaStage scene first.", "OK");
+                return;
+            }
+            var sprite = LoadButtonSprite("Results_Lose.png", FilterMode.Bilinear);
+            Undo.RecordObject(game, "Set lose background");
+            if (game.resultsBackground == null && game.resultsPanel != null)
+                game.resultsBackground = game.resultsPanel.GetComponent<Image>();
+            game.loseBackground = sprite;
+            EditorUtility.SetDirty(game);
+            EditorSceneManager.MarkSceneDirty(game.gameObject.scene);
+            Debug.Log(sprite != null
+                ? "Pimba Stage: lose background set. Save the scene (Ctrl+S) to keep it."
+                : "Pimba Stage: Assets/PimbaStage/UI/Results_Lose.png not found.");
+        }
+
+        /// <summary>
+        /// Switches every UI text in the open scene to the font in Assets/PimbaStage/Fonts,
+        /// without rebuilding the scene, so any changes made in the scene are kept.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply Font (keeps scene edits)")]
+        public static void ApplyFont()
+        {
+            if (StopIfPlaying()) return;
+            var newFont = LoadFont();
+            if (!customFont)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put a .ttf or .otf font in " + FontFolder + " first.", "OK");
+                return;
+            }
+
+            int texts = 0;
+            var scene = SceneManager.GetActiveScene();
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                foreach (var text in root.GetComponentsInChildren<Text>(true))
+                {
+                    Undo.RecordObject(text, "Apply font");
+                    text.font = newFont;
+                    text.fontStyle = FontStyle.Normal;
+                    EditorUtility.SetDirty(text);
+                    texts++;
+                }
+                foreach (var menu in root.GetComponentsInChildren<StageMenu>(true))
+                {
+                    Undo.RecordObject(menu, "Apply font");
+                    menu.font = newFont; // used for the song list, which is made while playing
+                    EditorUtility.SetDirty(menu);
+                }
+            }
+            EditorSceneManager.MarkSceneDirty(scene);
+            Debug.Log("Pimba Stage: " + newFont.name + " applied to " + texts + " texts. Save the scene (Ctrl+S) to keep it.");
+        }
+
+        /// <summary>
+        /// Gives Player 1 his idle / walk / jump / fall / hurt animations (Characters/PerformerIdle_0.png ...)
+        /// in the open scene and in the 3D version's scene, without rebuilding, so scene edits are kept.
+        /// A scene with no other unsaved changes is saved straight away.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply Performer Animations (keeps scene edits)")]
+        public static void ApplyPerformerAnimations()
+        {
+            if (StopIfPlaying()) return;
+            if (LoadCharacterFrames("PerformerIdle", 20f, PerformerPivot).Length == 0)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put the performer frames (PerformerIdle_0.png ...) in " + CharacterFolder + " first.", "OK");
+                return;
+            }
+
+            var report = new List<string>();
+            bool open3D = false;
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.isLoaded) continue;
+                if (scene.path == Scene3DPath) open3D = true;
+                bool hadOtherChanges = scene.isDirty;
+                if (SetPerformerAnimations(scene) == 0) continue;
+                if (!hadOtherChanges && !string.IsNullOrEmpty(scene.path) && EditorSceneManager.SaveScene(scene))
+                    report.Add(scene.name + " (saved)");
+                else
+                {
+                    EditorSceneManager.MarkSceneDirty(scene);
+                    report.Add(scene.name + " (press Ctrl+S to keep it; it had other unsaved changes, so it wasn't saved for you)");
+                }
+            }
+
+            if (!open3D && System.IO.File.Exists(Scene3DPath))
+            {
+                var scene3D = EditorSceneManager.OpenScene(Scene3DPath, OpenSceneMode.Additive);
+                if (SetPerformerAnimations(scene3D) > 0 && EditorSceneManager.SaveScene(scene3D))
+                    report.Add(scene3D.name + " (saved)");
+                EditorSceneManager.CloseScene(scene3D, true);
+            }
+
+            Debug.Log(report.Count > 0
+                ? "Pimba Stage: performer animations set in " + string.Join(", ", report) + "."
+                : "Pimba Stage: no performer (Player 1) found. Open the PimbaStage scene first.");
+        }
+
+        private static int SetPerformerAnimations(Scene scene)
+        {
+            int count = 0;
+            foreach (var root in scene.GetRootGameObjects())
+                foreach (var player in root.GetComponentsInChildren<StagePlayer>(true))
+                    if (SetPerformerAnimations(player)) count++;
+            return count;
+        }
+
+        /// <summary>Hooks Player 1 up to his animation frames. Returns false if the idle frames are missing.</summary>
+        private static bool SetPerformerAnimations(StagePlayer player)
+        {
+            var idle = LoadCharacterFrames("PerformerIdle", 20f, PerformerPivot);
+            if (idle.Length == 0) return false;
+
+            Undo.RecordObject(player, "Performer animations");
+            player.idleFrames = idle;
+            player.walkFrames = LoadCharacterFrames("PerformerWalk", 20f, PerformerPivot);
+            player.jumpFrames = LoadCharacterFrames("PerformerJump", 20f, PerformerPivot);  // going up (2 frames)
+            player.fallFrames = LoadCharacterFrames("PerformerFall", 20f, PerformerPivot);  // going down (2 frames)
+            player.hurtFrames = LoadCharacterFrames("PerformerHurt", 20f, PerformerPivot);
+            player.idleFps = 1000f / 170f;  // frame times from the GIFs
+            player.walkFps = 1000f / 170f;
+            player.jumpFps = 10f;
+            player.hurtFps = 1000f / 140f;
+            EditorUtility.SetDirty(player);
+
+            var anim = player.animator;
+            if (anim != null)
+            {
+                Undo.RecordObject(anim, "Performer animations");
+                anim.frames = idle;
+                anim.framesPerSecond = player.idleFps;
+                EditorUtility.SetDirty(anim);
+                var art = anim.GetComponent<SpriteRenderer>();
+                if (art != null)
+                {
+                    Undo.RecordObject(art, "Performer animations");
+                    art.sprite = idle[0];
+                    EditorUtility.SetDirty(art);
+                }
+            }
+            return true;
+        }
+
+        private static bool StopIfPlaying()
+        {
+            if (!EditorApplication.isPlaying) return false;
+            EditorUtility.DisplayDialog("Pimba Stage", "Stop Play mode first, then run this again.", "OK");
+            return true;
         }
 
         public static void BuildWithoutPrompts()
@@ -462,12 +635,39 @@ namespace PimbaStage.EditorTools
             body.interpolation = RigidbodyInterpolation2D.Interpolate;
             body.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
             var capsule = go.AddComponent<CapsuleCollider2D>();
-            capsule.direction = CapsuleDirection2D.Vertical;
-            capsule.size = new Vector2(0.8f, 1.3f);
             capsule.offset = Vector2.zero;
 
             var model = new GameObject("Model").transform;
             model.SetParent(go.transform, false);
+
+            // The user's red performer: idle / walk / jump / fall / hurt (Characters/PerformerIdle_0.png ..., 34x34 px),
+            // or the older single animation (Characters/Performer_0..3.png, 30x34 px).
+            // 20 px per unit = 1.7 units tall; pivot at the feet so they sit on the bottom of the collider.
+            Sprite[] frames = LoadCharacterFrames("PerformerIdle", 20f, PerformerPivot);
+            if (frames.Length == 0) frames = LoadCharacterFrames("Performer", 20f, new Vector2(0.5f, 0f));
+            if (frames.Length > 0)
+            {
+                capsule.direction = CapsuleDirection2D.Vertical;
+                capsule.size = new Vector2(0.9f, 1.45f);
+                model.localPosition = new Vector3(0f, -0.725f, 0f);
+                var art = SR("Character", model, frames[0], Color.white, Vector3.zero, Vector2.one, 10);
+                var anim = art.gameObject.AddComponent<SpriteFrameAnimator>();
+                anim.frames = frames;
+                anim.framesPerSecond = 7.7f;
+
+                var performerSpot = SR("Performer Spotlight", world, sSoft, new Color(1f, 0.92f, 0.65f, 0.35f), new Vector3(position.x, 0.02f, 1.2f), new Vector2(2.4f, 1.6f), -49);
+                performerSpot.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+                var performer = go.AddComponent<StagePlayer>();
+                performer.model = model;
+                performer.floorSpot = performerSpot.transform;
+                performer.animator = anim;
+                SetPerformerAnimations(performer);
+                return performer;
+            }
+
+            // Fallback: simple generated performer
+            capsule.direction = CapsuleDirection2D.Vertical;
+            capsule.size = new Vector2(0.8f, 1.3f);
             var ink = new Color(0.1f, 0.08f, 0.12f);
             SR("Leg", model, sRounded, ink, new Vector3(-0.17f, -0.48f, 0f), new Vector2(0.2f, 0.35f), 9);
             SR("Leg", model, sRounded, ink, new Vector3(0.17f, -0.48f, 0f), new Vector2(0.2f, 0.35f), 9);
@@ -589,7 +789,8 @@ namespace PimbaStage.EditorTools
             BuildOptions(menu, play);
 
             var results = UIRect("Results Panel", play, new Vector2(0.12f, 0.1f), new Vector2(0.88f, 0.86f));
-            Img(results, sRounded, new Color(0f, 0f, 0f, 0.6f), Image.Type.Sliced);
+            game.resultsBackground = Img(results, sRounded, new Color(0f, 0f, 0f, 0.6f), Image.Type.Sliced);
+            game.loseBackground = LoadButtonSprite("Results_Lose.png", FilterMode.Bilinear);
             game.resultsPanel = results.gameObject;
             game.resultsTitle = Label("Result", results, new Vector2(0f, 0.74f), new Vector2(1f, 0.98f), "BRAVO!", 120, new Color(1f, 0.84f, 0.2f));
             game.resultsBody = Label("Stats", results, new Vector2(0.04f, 0.04f), new Vector2(0.96f, 0.74f), "", 34, Color.white, FontStyle.Normal);
@@ -654,8 +855,8 @@ namespace PimbaStage.EditorTools
             lane.hitLineOffset = hitLine;
             game.lane = lane;
 
-            BuildMusician(panel, pulses);
-            game.musicianHeartFills = Hearts("Musician Hearts (P2)", panel, new Vector2(0.5f, 0.012f), new Vector2(0.5f, 0f), 3, 56f, 66f);
+            BuildMusician(panel, pulses, game.conductor);
+            game.musicianHeartFills = Hearts("Singer Hearts (P2)", panel, new Vector2(0.5f, 0.012f), new Vector2(0.5f, 0f), 3, 56f, 66f);
 
             game.beatPulses = pulses.ToArray();
         }
@@ -693,7 +894,7 @@ namespace PimbaStage.EditorTools
                 menu.performerButtons[i] = TextButton("P1 " + levels[i], panel, new Vector2(0.17f + i * 0.23f, 0.73f), new Vector2(0.37f + i * 0.23f, 0.8f), levels[i]);
             menu.performerHint = Label("P1 Hint", panel, new Vector2(0.04f, 0.67f), new Vector2(0.96f, 0.725f), "", 22, new Color(0.85f, 0.82f, 0.78f), FontStyle.Italic);
 
-            Label("P2 Label", panel, new Vector2(0.04f, 0.585f), new Vector2(0.96f, 0.645f), "MUSICIAN (P2)  -  ARROWS", 28, Color.white);
+            Label("P2 Label", panel, new Vector2(0.04f, 0.585f), new Vector2(0.96f, 0.645f), "SINGER (P2)  -  ARROWS", 28, Color.white);
             menu.musicianButtons = new Button[3];
             for (int i = 0; i < 3; i++)
                 menu.musicianButtons[i] = TextButton("P2 " + levels[i], panel, new Vector2(0.17f + i * 0.23f, 0.515f), new Vector2(0.37f + i * 0.23f, 0.585f), levels[i]);
@@ -815,23 +1016,65 @@ namespace PimbaStage.EditorTools
             return button;
         }
 
+        /// <summary>
+        /// Loads Characters/{prefix}_0.png, _1.png ... (frames taken from the user's GIFs) as crisp pixel-art sprites.
+        /// Returns an empty array if there are none.
+        /// </summary>
+        private static Sprite[] LoadCharacterFrames(string prefix, float pixelsPerUnit, Vector2 pivot)
+        {
+            var frames = new List<Sprite>();
+            for (int i = 0; i < 64; i++)
+            {
+                string path = CharacterFolder + "/" + prefix + "_" + i + ".png";
+                var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+                if (importer == null) break;
+
+                var settings = new TextureImporterSettings();
+                importer.ReadTextureSettings(settings);
+                bool needsSetup = importer.textureType != TextureImporterType.Sprite || importer.filterMode != FilterMode.Point ||
+                                  importer.textureCompression != TextureImporterCompression.Uncompressed || importer.mipmapEnabled ||
+                                  !Mathf.Approximately(importer.spritePixelsPerUnit, pixelsPerUnit) ||
+                                  settings.spriteAlignment != (int)SpriteAlignment.Custom || settings.spritePivot != pivot;
+                if (needsSetup)
+                {
+                    importer.textureType = TextureImporterType.Sprite;
+                    importer.spriteImportMode = SpriteImportMode.Single;
+                    importer.filterMode = FilterMode.Point;
+                    importer.mipmapEnabled = false;
+                    importer.alphaIsTransparency = true;
+                    importer.textureCompression = TextureImporterCompression.Uncompressed;
+                    importer.spritePixelsPerUnit = pixelsPerUnit;
+                    importer.ReadTextureSettings(settings);
+                    settings.spriteAlignment = (int)SpriteAlignment.Custom;
+                    settings.spritePivot = pivot;
+                    settings.spriteMeshType = SpriteMeshType.FullRect;
+                    importer.SetTextureSettings(settings);
+                    importer.SaveAndReimport();
+                }
+                var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(path);
+                if (sprite == null) break;
+                frames.Add(sprite);
+            }
+            return frames.ToArray();
+        }
+
         /// <summary>Loads one of the hand-drawn menu buttons and makes sure it imports as crisp pixel art.</summary>
-        private static Sprite LoadButtonSprite(string file)
+        private static Sprite LoadButtonSprite(string file, FilterMode filter = FilterMode.Point)
         {
             string path = ButtonFolder + "/" + file;
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
             {
-                Debug.LogWarning("Pimba Stage: button art not found at " + path + ", using a plain button.");
+                Debug.LogWarning("Pimba Stage: UI art not found at " + path + ", using the plain look.");
                 return null;
             }
-            if (importer.textureType != TextureImporterType.Sprite || importer.filterMode != FilterMode.Point ||
+            if (importer.textureType != TextureImporterType.Sprite || importer.filterMode != filter ||
                 importer.textureCompression != TextureImporterCompression.Uncompressed || importer.mipmapEnabled ||
                 importer.spriteImportMode != SpriteImportMode.Single)
             {
                 importer.textureType = TextureImporterType.Sprite;
                 importer.spriteImportMode = SpriteImportMode.Single;
-                importer.filterMode = FilterMode.Point;
+                importer.filterMode = filter;
                 importer.mipmapEnabled = false;
                 importer.alphaIsTransparency = true;
                 importer.textureCompression = TextureImporterCompression.Uncompressed;
@@ -841,8 +1084,28 @@ namespace PimbaStage.EditorTools
             return AssetDatabase.LoadAssetAtPath<Sprite>(path);
         }
 
-        private static void BuildMusician(RectTransform panel, List<BeatPulse> pulses)
+        private static void BuildMusician(RectTransform panel, List<BeatPulse> pulses, Conductor conductor)
         {
+            // The user's yellow singer (Characters/Singer_0..3.png, 34x23 px, 4-frame GIF), shown at 7x, one loop per beat.
+            Sprite[] frames = LoadCharacterFrames("Singer", 20f, new Vector2(0.5f, 0.5f));
+            if (frames.Length > 0)
+            {
+                var stand = UIRectAt("Singer", panel, new Vector2(0.5f, 0.065f), new Vector2(340f, 250f), new Vector2(0.5f, 0f));
+                Img(Px("Spotlight", stand, 170f, 115f, 320f, 220f), sSoft, new Color(1f, 0.9f, 0.55f, 0.22f));
+                var singer = Px("Character", stand, 170f, 112f, 238f, 161f);
+                var singerImg = Img(singer, frames[0], Color.white);
+                singerImg.preserveAspect = true;
+                var anim = singer.gameObject.AddComponent<SpriteFrameAnimator>();
+                anim.frames = frames;
+                anim.framesPerSecond = 7.7f;
+                anim.framesPerBeat = 4;
+                anim.conductor = conductor;
+                Img(Px("Podium", stand, 170f, 16f, 300f, 32f), sRounded, new Color(0.38f, 0.1f, 0.12f), Image.Type.Sliced);
+                Img(Px("Podium Trim", stand, 170f, 33f, 300f, 6f), sSquare, new Color(0.86f, 0.66f, 0.26f));
+                return;
+            }
+
+            // Fallback: simple generated accordion player
             var box = UIRectAt("Musician", panel, new Vector2(0.5f, 0.07f), new Vector2(340f, 200f), new Vector2(0.5f, 0f));
             var suit = new Color(0.12f, 0.12f, 0.18f);
             var skin = new Color(1f, 0.82f, 0.68f);
@@ -974,7 +1237,8 @@ namespace PimbaStage.EditorTools
             t.text = text;
             t.fontSize = size;
             t.color = color;
-            t.fontStyle = style;
+            // The pixel font only has a regular style; fake bold/italic would blur it.
+            t.fontStyle = customFont ? FontStyle.Normal : style;
             t.alignment = TextAnchor.MiddleCenter;
             t.horizontalOverflow = HorizontalWrapMode.Wrap;
             t.verticalOverflow = VerticalWrapMode.Overflow;
@@ -1014,8 +1278,20 @@ namespace PimbaStage.EditorTools
             return songs;
         }
 
+        /// <summary>Uses the first font in Assets/PimbaStage/Fonts (VCR OSD Mono), else Unity's built-in font.</summary>
         private static Font LoadFont()
         {
+            customFont = false;
+            if (AssetDatabase.IsValidFolder(FontFolder))
+            {
+                foreach (string guid in AssetDatabase.FindAssets("t:Font", new[] { FontFolder }))
+                {
+                    var custom = AssetDatabase.LoadAssetAtPath<Font>(AssetDatabase.GUIDToAssetPath(guid));
+                    if (custom == null) continue;
+                    customFont = true;
+                    return custom;
+                }
+            }
             var f = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             if (f == null) Debug.LogWarning("Pimba Stage: built-in font LegacyRuntime.ttf not found; assign a font to the UI texts.");
             return f;
