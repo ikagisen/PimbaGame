@@ -1,0 +1,43 @@
+# ---- Unity: generated folders (rebuilt automatically, never commit) ----
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+/PimbaGame/
+
+# Keep .meta files for everything in Assets
+!/[Aa]ssets/**/*.meta
+
+# ---- IDE files (Visual Studio / Rider / VS Code regenerate these) ----
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.tmp
+
+# ---- Builds and exports ----
+*.apk
+*.aab
+*.unitypackage
+*.app
+sysinfo.txt
+crashlytics-build.properties
+
+# ---- OS junk ----
+.DS_Store
+Thumbs.db
+desktop.ini

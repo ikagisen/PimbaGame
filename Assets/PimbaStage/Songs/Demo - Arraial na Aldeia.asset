@@ -1,0 +1,27 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dce674872b9bb5d4390978963c069f1e, type: 3}
+  m_Name: Demo - Arraial na Aldeia
+  m_EditorClassIdentifier: Assembly-CSharp::PimbaStage.PimbaSong
+  title: Arraial na Aldeia
+  artist: Banda do Arraial
+  music: {fileID: 0}
+  useDemoTrack: 1
+  bpm: 128
+  firstBeatOffset: 0
+  volume: 0.9
+  chartFile: {fileID: 0}
+  chartText: 
+  autoDensity: 1
+  autoSeed: 7
+  autoStartBeat: 8
+  recordChart: 0
