@@ -20,6 +20,8 @@ namespace PimbaStage.EditorTools
     ///   In the copy, the 2D crates and cardboard blocks are swapped for the Scene_test02 models (speakers, TV,
     ///   a 3D staircase and a block) at the same size and place, each with a collider traced from its shape.
     ///   Sandbags, carts, trapdoors and fire are left as they are.
+    /// Tools > Pimba Stage > Apply 3D Speaker Bounce (keeps scene edits)
+    ///   Makes every CAIXA DE SOM speaker in the 3D version squash and stretch on each beat of the song.
     /// Tools > Pimba Stage > Check 3D Obstacles
     ///   Tests that the performer can stand on and bump into every 3D obstacle.
     /// Tools > Pimba Stage > Build 3D Version (separate .exe)
@@ -125,6 +127,7 @@ namespace PimbaStage.EditorTools
                 AddStageFloor(scene, info);
                 AddBlackout(scene, info);
                 SetUpLighting(scene, info);
+                AddSpeakerBounce(scene); // the CAIXA DE SOM speakers squash and stretch on the beat
                 EditorSceneManager.MarkSceneDirty(scene);
                 EditorSceneManager.SaveScene(scene);
                 AddToBuildSettingsDisabled();
@@ -145,6 +148,59 @@ namespace PimbaStage.EditorTools
                 Debug.Log("Pimba Stage: PimbaStage scene had unsaved changes: " + mainWasDirty + ", now: " +
                           (mainAfter.IsValid() && mainAfter.isLoaded ? mainAfter.isDirty.ToString() : "not open"));
             }
+        }
+
+        /// <summary>
+        /// Makes every CAIXA DE SOM speaker in the 3D version (the obstacles and the ones in the stage set) squash and stretch
+        /// on each beat of the song, by adding a "Speaker Beat Bounce" object to the 3D scene, without rebuilding it.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply 3D Speaker Bounce (keeps scene edits)")]
+        public static void ApplySpeakerBounce()
+        {
+            if (EditorApplication.isPlaying) { Dialog("Stop Play mode first, then run this again."); return; }
+            if (!File.Exists(Scene3DPath)) { Dialog("Create the 3D version first (Tools > Pimba Stage > Create 3D Set Version)."); return; }
+
+            Scene scene = SceneManager.GetSceneByPath(Scene3DPath);
+            bool wasOpen = scene.IsValid() && scene.isLoaded;
+            bool hadOtherChanges = wasOpen && scene.isDirty;
+            if (!wasOpen) scene = EditorSceneManager.OpenScene(Scene3DPath, OpenSceneMode.Additive);
+            int speakers = AddSpeakerBounce(scene);
+            string saved;
+            if (!hadOtherChanges && EditorSceneManager.SaveScene(scene)) saved = "saved";
+            else
+            {
+                EditorSceneManager.MarkSceneDirty(scene);
+                saved = "press Ctrl+S to keep it; it had other unsaved changes, so it wasn't saved for you";
+            }
+            if (!wasOpen) EditorSceneManager.CloseScene(scene, true);
+            Debug.Log("Pimba Stage: " + speakers + " CAIXA DE SOM speakers now squash and stretch on the beat in " + scene.name + " (" + saved + ").");
+        }
+
+        private static int AddSpeakerBounce(Scene scene)
+        {
+            Conductor conductor = null;
+            BeatSquashStretch bounce = null;
+            int speakers = 0;
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                if (conductor == null) conductor = root.GetComponentInChildren<Conductor>(true);
+                if (bounce == null) bounce = root.GetComponentInChildren<BeatSquashStretch>(true);
+                if (!root.activeSelf) continue; // the hidden copy of the obstacle model
+                foreach (var t in root.GetComponentsInChildren<Transform>(true))
+                    if (t.name.StartsWith("CAIXA DE SOM")) speakers++;
+            }
+            if (bounce == null)
+            {
+                var go = new GameObject("Speaker Beat Bounce (CAIXA DE SOM)");
+                SceneManager.MoveGameObjectToScene(go, scene);
+                bounce = go.AddComponent<BeatSquashStretch>();
+                Undo.RegisterCreatedObjectUndo(go, "Speaker beat bounce");
+            }
+            else Undo.RecordObject(bounce, "Speaker beat bounce");
+            bounce.conductor = conductor;
+            bounce.namePrefix = "CAIXA DE SOM";
+            EditorUtility.SetDirty(bounce);
+            return speakers;
         }
 
         [MenuItem("Tools/Pimba Stage/Build 3D Version (separate .exe)")]

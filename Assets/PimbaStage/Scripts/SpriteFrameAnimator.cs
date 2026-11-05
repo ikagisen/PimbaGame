@@ -19,6 +19,8 @@ namespace PimbaStage
         public Conductor conductor;
 
         public float SpeedMultiplier { get; set; } = 1f;
+        /// <summary>False = play the frames once and hold the last one (set by Play).</summary>
+        public bool Loop { get; set; } = true;
 
         private SpriteRenderer spriteRenderer;
         private Image image;
@@ -42,7 +44,8 @@ namespace PimbaStage
             }
             else
             {
-                time = Mathf.Repeat(time + Time.deltaTime * framesPerSecond * Mathf.Max(0f, SpeedMultiplier), frames.Length);
+                float advance = Time.deltaTime * framesPerSecond * Mathf.Max(0f, SpeedMultiplier);
+                time = Loop ? Mathf.Repeat(time + advance, frames.Length) : Mathf.Min(time + advance, frames.Length - 0.001f);
                 index = Mathf.Clamp((int)time, 0, frames.Length - 1);
             }
             Show(index);
@@ -51,11 +54,13 @@ namespace PimbaStage
         /// <summary>
         /// Switches to another animation and starts it from its first frame.
         /// Does nothing (apart from taking the new speed) if that animation is already playing, unless restart is set.
+        /// With loop off it plays once and holds the last frame.
         /// </summary>
-        public void Play(Sprite[] clip, float fps, bool restart = false)
+        public void Play(Sprite[] clip, float fps, bool restart = false, bool loop = true)
         {
             if (clip == null || clip.Length == 0) return;
             framesPerSecond = fps;
+            Loop = loop;
             if (clip == frames && !restart) return;
             frames = clip;
             time = 0f;

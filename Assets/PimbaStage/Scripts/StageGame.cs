@@ -26,6 +26,8 @@ namespace PimbaStage
         public StageScroller scroller;
         public StagePlayer player;
         public StageMenu menu;
+        [Tooltip("Arcade scoreboard (names after a show, and Options > SCOREBOARD). Added when the game starts if empty.")]
+        public ScoreboardScreen scoreboard;
         [Tooltip("Obstacles and bridges that depend on the Performer difficulty.")]
         public DifficultyFilter[] difficultyObjects = new DifficultyFilter[0];
 
@@ -37,7 +39,11 @@ namespace PimbaStage
         public float goodHeal = 0.015f;
         public float amazingHeal = 0.03f;
         public Image[] performerHeartFills = new Image[0];
+        [Tooltip("Player 1's heart counter (box with the yellow heart and a rolling number).")]
+        public HeartCounter performerHeartCounter;
         public Image[] musicianHeartFills = new Image[0];
+        [Tooltip("Player 2's skull health bar (used instead of the hearts when set).")]
+        public HealthBarSprites musicianHealthBar;
 
         [Header("UI")]
         public Text bannerText;
@@ -47,8 +53,14 @@ namespace PimbaStage
         public GameObject resultsPanel;
         [Tooltip("Background image of the results panel.")]
         public Image resultsBackground;
-        [Tooltip("Background shown instead when the show is lost (BOOO!).")]
+        [Tooltip("Background shown instead when the show is lost (the red screen).")]
         public Sprite loseBackground;
+        [Tooltip("GAME OVER panel laid on top of the red lose screen; the stats go in its box. Empty = the old BOOO! title.")]
+        public Sprite gameOverPanel;
+        [Tooltip("How big the GAME OVER panel is on the red screen (1 = as big as it fits).")]
+        [Range(0.3f, 1f)] public float gameOverPanelSize = 0.97f;
+        [Tooltip("Where the stats go on the GAME OVER panel: x, y (from the bottom-left), width, height, as 0-1 of the panel.")]
+        public Rect loseTextArea = new Rect(0.075f, 0.10f, 0.82f, 0.50f);
         public Text resultsTitle;
         public Text resultsBody;
         public RectTransform curtainLeft;
@@ -64,6 +76,8 @@ namespace PimbaStage
         private readonly int[] counts = new int[5];
         private bool won;
         private float endTimer, curtainAmount = 1f, curtainTarget = 1f;
+        private bool layoutGameOver;
+        private Image gameOverImage;
         private float leftOpenMax, rightOpenMin;
 
         private void Awake()
@@ -108,6 +122,7 @@ namespace PimbaStage
                 menu.SongChanged += s => { song = s; if (bannerText != null) bannerText.text = s.BannerText; };
                 menu.SettingsChanged += ApplyPerformerDifficulty;
             }
+            SetUpScoreboard();
             song = CurrentSong();
             if (bannerText != null) bannerText.text = song.BannerText;
             ApplyPerformerDifficulty();
@@ -118,6 +133,23 @@ namespace PimbaStage
                 StartShow();
             }
             else ShowMenu();
+        }
+
+        private void SetUpScoreboard()
+        {
+            if (scoreboard == null) scoreboard = GetComponent<ScoreboardScreen>();
+            if (scoreboard == null) scoreboard = gameObject.AddComponent<ScoreboardScreen>();
+            var playfield = resultsPanel != null ? resultsPanel.transform.parent as RectTransform : null;
+            Font font = menu != null && menu.font != null ? menu.font : resultsBody != null ? resultsBody.font : null;
+            scoreboard.Setup(playfield, font, menu != null ? menu.entrySprite : null,
+                player != null ? player.gamepadIndex : 0, lane != null ? lane.gamepadIndex : 1);
+            if (menu != null)
+                menu.ScoreboardPressed += () =>
+                {
+                    if (scoreboard.BlocksGameInput) return; // the key that closed it
+                    menu.Hide();
+                    scoreboard.ShowBoard(menu.ReturnFromScoreboard);
+                };
         }
 
         private PimbaSong CurrentSong()
@@ -217,7 +249,14 @@ namespace PimbaStage
                     break;
 
                 case State.Ended:
-                    if (resultsPanel != null && !resultsPanel.activeSelf && curtainAmount > 0.95f) resultsPanel.SetActive(true);
+                    if (resultsPanel != null && !resultsPanel.activeSelf && curtainAmount > 0.95f)
+                    {
+                        resultsPanel.SetActive(true);
+                        if (layoutGameOver) LayoutGameOver();
+                        // Both players write their names in a window in front of the results, then CONTINUE.
+                        if (scoreboard != null && song != null && !song.recordChart) scoreboard.ShowNameEntry(score, song.title);
+                    }
+                    if (scoreboard != null && scoreboard.BlocksGameInput) break;
                     if (enter || restart) Restart();
                     else if (esc) BackToMenu();
                     break;
@@ -386,9 +425,11 @@ namespace PimbaStage
                 resultsBackground.type = Image.Type.Simple;
                 resultsBackground.color = Color.white;
             }
+            bool gameOverArt = !success && resultsBackground != null && gameOverPanel != null;
+            layoutGameOver = gameOverArt;
             if (resultsTitle != null)
             {
-                resultsTitle.text = success ? "BRAVO!" : "BOOO!";
+                resultsTitle.text = success ? "BRAVO!" : gameOverArt ? "" : "BOOO!";
                 // White reads better than red on the red lose background.
                 resultsTitle.color = success ? new Color(1f, 0.84f, 0.2f)
                     : loseBackground != null ? Color.white : new Color(1f, 0.4f, 0.35f);
@@ -404,6 +445,68 @@ namespace PimbaStage
                 if (chartPath != null) body += "\nChart saved: " + chartPath + "\n";
                 body += "\nENTER / R  play again        ESC  main menu";
                 resultsBody.text = body;
+            }
+        }
+
+        /// <summary>
+        /// Lose screen with the GAME OVER art: keeps the art's shape on any screen and puts the stats
+        /// in the box under the title, shrinking them until every line fits.
+        /// </summary>
+        private void LayoutGameOver()
+        {
+            layoutGameOver = false;
+            var results = resultsBackground.rectTransform;
+
+            // The GAME OVER panel goes on top of the red screen (behind the text), centred, at its own shape.
+            if (gameOverImage == null)
+            {
+                var go = new GameObject("Game Over Panel", typeof(RectTransform));
+                go.layer = results.gameObject.layer;
+                go.transform.SetParent(results, false);
+                go.transform.SetAsFirstSibling();
+                gameOverImage = go.AddComponent<Image>();
+                gameOverImage.raycastTarget = false;
+                gameOverImage.preserveAspect = true;
+            }
+            gameOverImage.sprite = gameOverPanel;
+            float size = Mathf.Clamp01(gameOverPanelSize);
+            var art = gameOverImage.rectTransform;
+            art.anchorMin = new Vector2(0.5f - size * 0.5f, 0.5f - size * 0.5f);
+            art.anchorMax = new Vector2(0.5f + size * 0.5f, 0.5f + size * 0.5f);
+            art.offsetMin = art.offsetMax = Vector2.zero;
+            gameOverImage.gameObject.SetActive(true);
+            if (resultsBody == null) return;
+
+            // Work out where the art is drawn (as 0-1 of the results area), then put the stats in its box.
+            Canvas.ForceUpdateCanvases();
+            Rect area0 = results.rect;
+            float boxW = area0.width * size, boxH = area0.height * size;
+            float artAspect = gameOverPanel.rect.width / Mathf.Max(1f, gameOverPanel.rect.height);
+            float drawW = boxW, drawH = boxH;
+            if (boxW / Mathf.Max(1f, boxH) > artAspect) drawW = boxH * artAspect;
+            else drawH = boxW / artAspect;
+            float w = drawW / Mathf.Max(1f, area0.width);
+            float h = drawH / Mathf.Max(1f, area0.height);
+            var origin = new Vector2((1f - w) * 0.5f, (1f - h) * 0.5f);
+            var area = resultsBody.rectTransform;
+            area.anchorMin = origin + Vector2.Scale(loseTextArea.min, new Vector2(w, h));
+            area.anchorMax = origin + Vector2.Scale(loseTextArea.max, new Vector2(w, h));
+            area.offsetMin = area.offsetMax = Vector2.zero;
+            FitWithoutWrapping(resultsBody, 10);
+        }
+
+        /// <summary>Shrinks the text until every line fits on one line and all lines fit in the box.</summary>
+        private static void FitWithoutWrapping(Text text, int minSize)
+        {
+            text.resizeTextForBestFit = false;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+            Canvas.ForceUpdateCanvases();
+            Rect box = text.rectTransform.rect;
+            for (int size = text.fontSize; size >= minSize; size--)
+            {
+                text.fontSize = size;
+                if (text.preferredWidth <= box.width && text.preferredHeight <= box.height) break;
             }
         }
 
@@ -427,9 +530,11 @@ namespace PimbaStage
 
         private void UpdateHearts()
         {
+            if (performerHeartCounter != null) performerHeartCounter.Show(hearts);
             for (int i = 0; i < performerHeartFills.Length; i++)
                 if (performerHeartFills[i] != null) performerHeartFills[i].fillAmount = i < hearts ? 1f : 0f;
 
+            if (musicianHealthBar != null) musicianHealthBar.Show(musicianHealth);
             int n = musicianHeartFills.Length;
             for (int i = 0; i < n; i++)
                 if (musicianHeartFills[i] != null) musicianHeartFills[i].fillAmount = Mathf.Clamp01(musicianHealth * n - i);

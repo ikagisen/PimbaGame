@@ -71,6 +71,8 @@ namespace PimbaStage
         public bool botplay;
 
         public event Action<Judgement> Judged;
+        /// <summary>Like Judged, plus which arrow it was (the singer uses it to pick his pose).</summary>
+        public event Action<ArrowDir, Judgement> NoteJudged;
         public int Combo { get; private set; }
         public int MaxCombo { get; private set; }
         public int NoteCount => chart != null ? chart.Count : 0;
@@ -182,6 +184,7 @@ namespace PimbaStage
                     Combo = 0;
                     ShowRating(Judgement.Miss);
                     Judged?.Invoke(Judgement.Miss);
+                    NoteJudged?.Invoke(dir, Judgement.Miss);
                 }
                 return;
             }
@@ -236,6 +239,7 @@ namespace PimbaStage
             }
             ShowRating(j);
             Judged?.Invoke(j);
+            NoteJudged?.Invoke(n.data.dir, j);
         }
 
         private bool WasPressed(ArrowDir dir)

@@ -27,6 +27,8 @@ namespace PimbaStage.EditorTools
         private const string ButtonFolder = Root + "/UI";
         private const string CharacterFolder = Root + "/Characters";
         private const string Scene3DPath = SceneFolder + "/PimbaStage3D.unity";
+        private const string AudioFolder = Root + "/Audio";
+        private static readonly Vector2 SingerPivot = new Vector2(0.5f, 0.5f);
         // The performer's animation frames are 34x34 px; his body is centred on column 18, feet on the bottom row.
         private static readonly Vector2 PerformerPivot = new Vector2(18f / 34f, 0f);
 
@@ -66,34 +68,37 @@ namespace PimbaStage.EditorTools
         }
 
         /// <summary>
-        /// Puts the red "lose" background (UI/Results_Lose.png) into the scene that is open now,
-        /// without rebuilding it, so any changes made in the scene are kept.
+        /// Puts the red "lose" screen (UI/Results_Lose.png) with the GAME OVER layer on top (UI/Results_GameOver.png)
+        /// into the open scene and the 3D version's scene, without rebuilding, so any changes made in the scene are kept.
         /// </summary>
         [MenuItem("Tools/Pimba Stage/Update Lose Background (keeps scene edits)")]
         public static void ApplyLoseBackground()
         {
             if (StopIfPlaying()) return;
-            StageGame game = null;
-            foreach (var root in SceneManager.GetActiveScene().GetRootGameObjects())
+            if (LoadButtonSprite("Results_Lose.png", FilterMode.Bilinear) == null)
             {
-                game = root.GetComponentInChildren<StageGame>(true);
-                if (game != null) break;
-            }
-            if (game == null)
-            {
-                EditorUtility.DisplayDialog("Pimba Stage", "Open the PimbaStage scene first.", "OK");
+                EditorUtility.DisplayDialog("Pimba Stage", "Put Results_Lose.png in " + ButtonFolder + " first.", "OK");
                 return;
             }
-            var sprite = LoadButtonSprite("Results_Lose.png", FilterMode.Bilinear);
-            Undo.RecordObject(game, "Set lose background");
-            if (game.resultsBackground == null && game.resultsPanel != null)
-                game.resultsBackground = game.resultsPanel.GetComponent<Image>();
-            game.loseBackground = sprite;
-            EditorUtility.SetDirty(game);
-            EditorSceneManager.MarkSceneDirty(game.gameObject.scene);
-            Debug.Log(sprite != null
-                ? "Pimba Stage: lose background set. Save the scene (Ctrl+S) to keep it."
-                : "Pimba Stage: Assets/PimbaStage/UI/Results_Lose.png not found.");
+            ApplyToScenes(SetLoseScreen, "lose screen", "results screen");
+        }
+
+        private static int SetLoseScreen(Scene scene)
+        {
+            int count = 0;
+            foreach (var root in scene.GetRootGameObjects())
+                foreach (var game in root.GetComponentsInChildren<StageGame>(true))
+                {
+                    Undo.RecordObject(game, "Set lose screen");
+                    if (game.resultsBackground == null && game.resultsPanel != null)
+                        game.resultsBackground = game.resultsPanel.GetComponent<Image>();
+                    game.loseBackground = LoadButtonSprite("Results_Lose.png", FilterMode.Bilinear);
+                    game.gameOverPanel = LoadButtonSprite("Results_GameOver.png");  // pixel art, kept sharp
+                    game.gameOverPanelSize = 0.97f;  // nearly the whole red screen
+                    EditorUtility.SetDirty(game);
+                    count++;
+                }
+            return count;
         }
 
         /// <summary>
@@ -135,7 +140,7 @@ namespace PimbaStage.EditorTools
         }
 
         /// <summary>
-        /// Gives Player 1 his idle / walk / jump / fall / hurt animations (Characters/PerformerIdle_0.png ...)
+        /// Gives Player 1 his idle / walk / jump / fall / hurt / double jump animations (Characters/PerformerIdle_0.png ...)
         /// in the open scene and in the 3D version's scene, without rebuilding, so scene edits are kept.
         /// A scene with no other unsaved changes is saved straight away.
         /// </summary>
@@ -149,35 +154,464 @@ namespace PimbaStage.EditorTools
                 return;
             }
 
+            ApplyToScenes(SetPerformerAnimations, "performer animations", "performer (Player 1)");
+        }
+
+        /// <summary>
+        /// Player 2's art: the dance, a pose for each arrow and a miss pose (Characters/SingerIdle_0.png ...), the miss sound
+        /// (Audio/Miss_1.wav ...), his platform (UI/SingerPlatform_0..2.png) and his skull health bar (UI/SingerHealth_0..11.png),
+        /// in the open scene and the 3D version's scene, without rebuilding. A scene with no other unsaved changes is saved straight away.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply P2 Singer Art (keeps scene edits)")]
+        public static void ApplySingerAnimations()
+        {
+            if (StopIfPlaying()) return;
+            if (LoadCharacterFrames("SingerIdle", 20f, SingerPivot).Length == 0)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put the singer frames (SingerIdle_0.png ...) in " + CharacterFolder + " first.", "OK");
+                return;
+            }
+            ApplyToScenes(SetSingerAnimations, "singer animations", "singer (Player 2)");
+        }
+
+        /// <summary>
+        /// Replaces Player 1's row of hearts with the counter box (UI/HeartCounter_0..11.png) holding the yellow heart
+        /// (UI/HeartYellow.png), in the open scene and the 3D version's scene, without rebuilding. Player 2's hearts stay as they are.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply P1 Heart Counter (keeps scene edits)")]
+        public static void ApplyPerformerHeartCounter()
+        {
+            if (StopIfPlaying()) return;
+            if (LoadCharacterFrames("HeartCounter", 16f, SingerPivot, ButtonFolder).Length == 0 || LoadButtonSprite("HeartYellow.png") == null)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put HeartCounter_0.png ... and HeartYellow.png in " + ButtonFolder + " first.", "OK");
+                return;
+            }
+            ApplyToScenes(SetPerformerHeartCounter, "Player 1 heart counter", "Player 1 hearts");
+        }
+
+        private static int SetPerformerHeartCounter(Scene scene)
+        {
+            int count = 0;
+            foreach (var root in scene.GetRootGameObjects())
+                foreach (var game in root.GetComponentsInChildren<StageGame>(true))
+                    if (SetPerformerHeartCounter(game)) count++;
+            return count;
+        }
+
+        /// <summary>
+        /// Puts the heart counter where Player 1's heart row is and hides the row (it is kept, switched off).
+        /// The box is drawn at 5 UI units per pixel and the yellow heart at 3.75 (3/4 of that), centred in the box's left window.
+        /// Returns false if the art or the heart row is missing.
+        /// </summary>
+        private static bool SetPerformerHeartCounter(StageGame game)
+        {
+            var frames = LoadCharacterFrames("HeartCounter", 16f, SingerPivot, ButtonFolder);
+            var heartSprite = LoadButtonSprite("HeartYellow.png");
+            if (frames.Length == 0 || heartSprite == null) return false;
+
+            RectTransform row = null;
+            if (game.performerHeartFills != null && game.performerHeartFills.Length > 0 && game.performerHeartFills[0] != null)
+                row = game.performerHeartFills[0].transform.parent.parent as RectTransform;
+
+            var counter = game.performerHeartCounter;
+            if (counter == null)
+            {
+                if (row == null) return false;
+                var box = new GameObject("Performer Heart Counter (P1)", typeof(RectTransform)).GetComponent<RectTransform>();
+                Undo.RegisterCreatedObjectUndo(box.gameObject, "Heart counter");
+                box.gameObject.layer = UILayer;
+                box.SetParent(row.parent, false);
+                box.SetSiblingIndex(row.GetSiblingIndex() + 1);
+                box.anchorMin = box.anchorMax = row.anchorMin;
+                box.pivot = row.pivot;
+                box.anchoredPosition = row.anchoredPosition;
+                var panelImage = box.gameObject.AddComponent<Image>();
+
+                var heartRect = new GameObject("Yellow Heart", typeof(RectTransform)).GetComponent<RectTransform>();
+                heartRect.gameObject.layer = UILayer;
+                heartRect.SetParent(box, false);
+                var heartImage = heartRect.gameObject.AddComponent<Image>();
+
+                counter = box.gameObject.AddComponent<HeartCounter>();
+                counter.panel = panelImage;
+                counter.heart = heartImage;
+            }
+            else Undo.RecordObject(counter, "Heart counter");
+
+            const float unitsPerPixel = 5f;
+            var boxRect = (RectTransform)counter.transform;
+            Undo.RecordObject(boxRect, "Heart counter");
+            boxRect.sizeDelta = new Vector2(frames[0].rect.width, frames[0].rect.height) * unitsPerPixel;
+            counter.frames = frames;
+            counter.maxNumber = 3;
+            counter.framesPerNumber = 4;
+            counter.emptyFrame = 10;
+            counter.frameTime = 0.13f;  // frame time from the GIF
+            EditorUtility.SetDirty(counter);
+
+            Undo.RecordObject(counter.panel, "Heart counter");
+            counter.panel.sprite = frames[0];
+            counter.panel.raycastTarget = false;
+            EditorUtility.SetDirty(counter.panel);
+
+            var hr = counter.heart.rectTransform;
+            Undo.RecordObject(hr, "Heart counter");
+            Undo.RecordObject(counter.heart, "Heart counter");
+            hr.anchorMin = hr.anchorMax = new Vector2(0f, 0.5f);
+            hr.pivot = new Vector2(0.5f, 0.5f);
+            hr.anchoredPosition = new Vector2(9f * unitsPerPixel, 0f);  // middle of the window (pixel columns 3-14)
+            hr.sizeDelta = new Vector2(heartSprite.rect.width, heartSprite.rect.height) * unitsPerPixel * 0.75f;
+            counter.heart.sprite = heartSprite;
+            counter.heart.color = Color.white;
+            counter.heart.raycastTarget = false;
+            EditorUtility.SetDirty(hr);
+            EditorUtility.SetDirty(counter.heart);
+
+            if (row != null && row.gameObject.activeSelf)
+            {
+                Undo.RecordObject(row.gameObject, "Heart counter");
+                row.gameObject.SetActive(false);
+            }
+            Undo.RecordObject(game, "Heart counter");
+            game.performerHeartCounter = counter;
+            EditorUtility.SetDirty(game);
+            return true;
+        }
+
+        private static readonly string[] DifficultyArtNames = { "Easy", "Normal", "Hard" };
+        private const float DifficultyArtScale = 3f; // 51x24 px art shown at 153x72
+
+        /// <summary>
+        /// Draws the Options screen's EASY / NORMAL / HARD buttons (both players) with the pixel art in UI/Difficulty_*_On.png
+        /// (coloured badge, shown on the chosen one) and UI/Difficulty_*_Off.png (just the text, shown on the others),
+        /// in the open scene and the 3D version's scene, without rebuilding, so scene edits are kept.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply Difficulty Buttons (keeps scene edits)")]
+        public static void ApplyDifficultyButtons()
+        {
+            if (StopIfPlaying()) return;
+            if (System.Array.IndexOf(LoadDifficultyArt("On"), null) >= 0 || System.Array.IndexOf(LoadDifficultyArt("Off"), null) >= 0)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put Difficulty_Easy_On.png, Difficulty_Easy_Off.png, Difficulty_Normal_On.png ... in " + ButtonFolder + " first.", "OK");
+                return;
+            }
+            ApplyToScenes(SetDifficultyButtons, "difficulty buttons", "options menu");
+        }
+
+        private static Sprite[] LoadDifficultyArt(string state)
+        {
+            var sprites = new Sprite[DifficultyArtNames.Length];
+            for (int i = 0; i < sprites.Length; i++)
+                sprites[i] = LoadButtonSprite("Difficulty_" + DifficultyArtNames[i] + "_" + state + ".png");
+            return sprites;
+        }
+
+        private static int SetDifficultyButtons(Scene scene)
+        {
+            int count = 0;
+            foreach (var root in scene.GetRootGameObjects())
+                foreach (var menu in root.GetComponentsInChildren<StageMenu>(true))
+                    if (SetDifficultyButtons(menu)) count++;
+            return count;
+        }
+
+        private static bool SetDifficultyButtons(StageMenu menu)
+        {
+            var chosen = LoadDifficultyArt("On");
+            var plain = LoadDifficultyArt("Off");
+            if (System.Array.IndexOf(chosen, null) >= 0 || System.Array.IndexOf(plain, null) >= 0) return false;
+
+            Undo.RecordObject(menu, "Set difficulty buttons");
+            menu.difficultyChosenArt = chosen;
+            menu.difficultyPlainArt = plain;
+            EditorUtility.SetDirty(menu);
+
+            foreach (var row in new[] { menu.performerButtons, menu.musicianButtons })
+            {
+                if (row == null) continue;
+                for (int i = 0; i < row.Length && i < chosen.Length; i++)
+                {
+                    var button = row[i];
+                    if (button == null) continue;
+
+                    // A whole-number size so the pixels stay square, centred where the old button was.
+                    var rect = (RectTransform)button.transform;
+                    Undo.RecordObject(rect, "Set difficulty buttons");
+                    Vector2 centreAnchor = (rect.anchorMin + rect.anchorMax) * 0.5f;
+                    Vector2 centreOffset = (rect.offsetMin + rect.offsetMax) * 0.5f;
+                    rect.anchorMin = centreAnchor;
+                    rect.anchorMax = centreAnchor;
+                    rect.pivot = new Vector2(0.5f, 0.5f);
+                    rect.sizeDelta = chosen[i].rect.size * DifficultyArtScale;
+                    rect.anchoredPosition = centreOffset;
+                    EditorUtility.SetDirty(rect);
+
+                    var image = button.targetGraphic as Image;
+                    if (image != null)
+                    {
+                        Undo.RecordObject(image, "Set difficulty buttons");
+                        image.sprite = i == 1 ? chosen[i] : plain[i]; // the game shows the saved choice when it starts
+                        image.type = Image.Type.Simple;
+                        image.preserveAspect = true;
+                        image.color = Color.white;
+                        image.raycastTarget = true; // the whole box is clickable, not only the letters
+                        EditorUtility.SetDirty(image);
+                    }
+
+                    Undo.RecordObject(button, "Set difficulty buttons");
+                    var colors = button.colors;
+                    colors.normalColor = Color.white; // keep the art's colours exactly as drawn
+                    button.colors = colors;
+                    EditorUtility.SetDirty(button);
+
+                    var label = button.GetComponentInChildren<Text>(true);
+                    if (label != null && label.gameObject != button.gameObject)
+                    {
+                        Undo.RecordObject(label.gameObject, "Set difficulty buttons");
+                        label.gameObject.SetActive(false); // the words are in the art
+                    }
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Runs apply on every open scene and on the 3D version's scene, saving the ones it can.</summary>
+        private static void ApplyToScenes(System.Func<Scene, int> apply, string what, string who)
+        {
             var report = new List<string>();
+            var openScenes = new List<Scene>();
+            var hadOtherChanges = new List<bool>();
             bool open3D = false;
             for (int i = 0; i < SceneManager.sceneCount; i++)
             {
                 var scene = SceneManager.GetSceneAt(i);
                 if (!scene.isLoaded) continue;
                 if (scene.path == Scene3DPath) open3D = true;
-                bool hadOtherChanges = scene.isDirty;
-                if (SetPerformerAnimations(scene) == 0) continue;
-                if (!hadOtherChanges && !string.IsNullOrEmpty(scene.path) && EditorSceneManager.SaveScene(scene))
-                    report.Add(scene.name + " (saved)");
-                else
-                {
-                    EditorSceneManager.MarkSceneDirty(scene);
-                    report.Add(scene.name + " (press Ctrl+S to keep it; it had other unsaved changes, so it wasn't saved for you)");
-                }
+                openScenes.Add(scene);
+                hadOtherChanges.Add(scene.isDirty);
             }
 
+            // The 3D version's scene first: opening and closing it can flag the open scene as changed,
+            // so the open scene is saved after it.
             if (!open3D && System.IO.File.Exists(Scene3DPath))
             {
                 var scene3D = EditorSceneManager.OpenScene(Scene3DPath, OpenSceneMode.Additive);
-                if (SetPerformerAnimations(scene3D) > 0 && EditorSceneManager.SaveScene(scene3D))
+                if (apply(scene3D) > 0 && EditorSceneManager.SaveScene(scene3D))
                     report.Add(scene3D.name + " (saved)");
                 EditorSceneManager.CloseScene(scene3D, true);
             }
 
+            for (int i = 0; i < openScenes.Count; i++)
+            {
+                var scene = openScenes[i];
+                if (apply(scene) == 0) continue;
+                if (!hadOtherChanges[i] && !string.IsNullOrEmpty(scene.path) && EditorSceneManager.SaveScene(scene))
+                    report.Insert(0, scene.name + " (saved)");
+                else
+                {
+                    EditorSceneManager.MarkSceneDirty(scene);
+                    report.Insert(0, scene.name + " (press Ctrl+S to keep it; it had other unsaved changes, so it wasn't saved for you)");
+                }
+            }
+
             Debug.Log(report.Count > 0
-                ? "Pimba Stage: performer animations set in " + string.Join(", ", report) + "."
-                : "Pimba Stage: no performer (Player 1) found. Open the PimbaStage scene first.");
+                ? "Pimba Stage: " + what + " set in " + string.Join(", ", report) + "."
+                : "Pimba Stage: no " + who + " found. Open the PimbaStage scene first.");
+        }
+
+        private static int SetSingerAnimations(Scene scene)
+        {
+            RhythmLane lane = null;
+            StageGame game = null;
+            var singers = new List<SpriteFrameAnimator>();
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                if (lane == null) lane = root.GetComponentInChildren<RhythmLane>(true);
+                if (game == null) game = root.GetComponentInChildren<StageGame>(true);
+                foreach (var anim in root.GetComponentsInChildren<SpriteFrameAnimator>(true))
+                    if (anim.GetComponent<Image>() != null && anim.name == "Character" &&
+                        anim.transform.parent != null && anim.transform.parent.name == "Singer")
+                        singers.Add(anim);  // the singer himself, not the platform next to him
+            }
+            int count = 0;
+            foreach (var anim in singers)
+                if (SetSingerAnimations(anim, lane))
+                {
+                    if (game != null) SetSingerStage(anim, game);
+                    count++;
+                }
+            return count;
+        }
+
+        /// <summary>
+        /// Player 2's stage: the singer stands on his platform (UI/SingerPlatform_0..2.png; its lights pulse on the beat),
+        /// and his health is the upright skull bar to his right (UI/SingerHealth_0..11.png, one picture per segment left)
+        /// instead of the three hearts. Everything is measured from the bottom of the panel, so it stays put on any screen;
+        /// the platform's pole runs down to the bottom edge. The old podium and hearts are switched off, not deleted.
+        /// </summary>
+        private static void SetSingerStage(SpriteFrameAnimator singer, StageGame game)
+        {
+            var platformFrames = LoadCharacterFrames("SingerPlatform", 16f, SingerPivot, ButtonFolder);
+            var healthLevels = LoadCharacterFrames("SingerHealth", 16f, SingerPivot, ButtonFolder);
+            var stand = singer.transform.parent as RectTransform;
+            var panel = stand != null ? stand.parent as RectTransform : null;
+            var character = (RectTransform)singer.transform;
+            if (panel == null || platformFrames.Length == 0 || healthLevels.Length == 0 || singer.frames == null || singer.frames.Length == 0) return;
+            Undo.RegisterFullObjectHierarchyUndo(panel.gameObject, "Singer stage");
+
+            const float unitsPerPixel = 6f;      // singer and platform (the singer was 7 before; 6 makes room for the platform)
+            const float barUnitsPerPixel = 2.25f; // health bar
+            const float feet = 184.5f;           // the singer's feet (top of the platform), above the bottom of the panel
+            const int dishRows = 13;             // the platform's dish and lights; the pole starts under it
+            var barSize = new Vector2(healthLevels[0].rect.width, healthLevels[0].rect.height) * barUnitsPerPixel;
+
+            // The stand now sits on the bottom of the panel, so all heights below are from the panel's bottom edge.
+            stand.anchorMin = stand.anchorMax = new Vector2(0.5f, 0f);
+            stand.pivot = new Vector2(0.5f, 0f);
+            stand.anchoredPosition = Vector2.zero;
+            float centre = stand.rect.width * 0.5f;
+
+            // The singer stands on the dish.
+            var singerSize = new Vector2(singer.frames[0].rect.width, singer.frames[0].rect.height) * unitsPerPixel;
+            character.sizeDelta = singerSize;
+            character.anchoredPosition = new Vector2(centre, feet + singerSize.y * 0.5f);
+            var spot = stand.Find("Spotlight") as RectTransform;
+            if (spot != null) spot.anchoredPosition = new Vector2(centre, feet + singerSize.y * 0.5f);
+            foreach (var old in new[] { "Podium", "Podium Trim" })
+            {
+                var t = stand.Find(old);
+                if (t != null) t.gameObject.SetActive(false);
+            }
+
+            // The platform, just behind the singer; its top edge is at his feet.
+            var platform = stand.Find("Platform") as RectTransform;
+            if (platform == null)
+            {
+                platform = new GameObject("Platform", typeof(RectTransform)).GetComponent<RectTransform>();
+                platform.gameObject.layer = UILayer;
+                platform.SetParent(stand, false);
+                platform.gameObject.AddComponent<Image>();
+                platform.gameObject.AddComponent<SpriteFrameAnimator>();
+            }
+            var strayPoses = platform.GetComponent<SingerPoses>();  // an earlier version mistook the platform for the singer
+            if (strayPoses != null) Undo.DestroyObjectImmediate(strayPoses);
+            platform.SetSiblingIndex(character.GetSiblingIndex());
+            platform.anchorMin = platform.anchorMax = Vector2.zero;
+            platform.pivot = new Vector2(0.5f, 1f);
+            platform.sizeDelta = new Vector2(platformFrames[0].rect.width, platformFrames[0].rect.height) * unitsPerPixel;
+            platform.anchoredPosition = new Vector2(centre, feet);
+            var platformImage = platform.GetComponent<Image>();
+            platformImage.sprite = platformFrames[0];
+            platformImage.raycastTarget = false;
+            var lights = platform.GetComponent<SpriteFrameAnimator>();
+            lights.frames = platformFrames;
+            lights.framesPerSecond = 1000f / 170f;          // frame time from the GIF, when no song is playing
+            lights.framesPerBeat = platformFrames.Length;   // during a song: lit on the beat, then dimming
+            lights.conductor = singer.conductor;
+
+            // Text (rating, combo) draws over the singer, not under him.
+            var rating = panel.Find("Rating");
+            if (rating != null && stand.GetSiblingIndex() > rating.GetSiblingIndex()) stand.SetSiblingIndex(rating.GetSiblingIndex());
+
+            // The skull health bar, standing upright to the right of the singer, centred on him and his dish.
+            var bar = panel.Find("Singer Health Bar (P2)") as RectTransform;
+            if (bar == null)
+            {
+                bar = new GameObject("Singer Health Bar (P2)", typeof(RectTransform)).GetComponent<RectTransform>();
+                bar.gameObject.layer = UILayer;
+                bar.SetParent(panel, false);
+                bar.gameObject.AddComponent<Image>();
+                bar.gameObject.AddComponent<HealthBarSprites>();
+            }
+            float dishBottom = feet - dishRows * unitsPerPixel;
+            float barMiddle = (dishBottom + feet + singerSize.y) * 0.5f;
+            bar.SetSiblingIndex(stand.GetSiblingIndex() + 1);
+            bar.anchorMin = bar.anchorMax = new Vector2(0.5f, 0f);
+            bar.pivot = new Vector2(0.5f, 0.5f);
+            bar.sizeDelta = barSize;
+            bar.anchoredPosition = new Vector2(singerSize.x * 0.5f + 4f + barSize.x * 0.5f, barMiddle);
+            var barImage = bar.GetComponent<Image>();
+            barImage.sprite = healthLevels[healthLevels.Length - 1];
+            barImage.raycastTarget = false;
+            var health = bar.GetComponent<HealthBarSprites>();
+            health.image = barImage;
+            health.levels = healthLevels;
+
+            if (game.musicianHeartFills != null && game.musicianHeartFills.Length > 0 && game.musicianHeartFills[0] != null)
+                game.musicianHeartFills[0].transform.parent.parent.gameObject.SetActive(false);
+            Undo.RecordObject(game, "Singer stage");
+            game.musicianHealthBar = health;
+            EditorUtility.SetDirty(game);
+        }
+
+        /// <summary>
+        /// Hooks Player 2 up to his dance / arrow / miss frames and the miss sounds.
+        /// The new frames are 34x32 px (the old ones were 34x23), so the picture grows upwards from the podium at the same 7x size.
+        /// Returns false if the idle frames are missing.
+        /// </summary>
+        private static bool SetSingerAnimations(SpriteFrameAnimator anim, RhythmLane lane)
+        {
+            var idle = LoadCharacterFrames("SingerIdle", 20f, SingerPivot);
+            if (idle.Length == 0) return false;
+
+            var poses = anim.GetComponent<SingerPoses>();
+            if (poses == null) poses = Undo.AddComponent<SingerPoses>(anim.gameObject);
+            else Undo.RecordObject(poses, "Singer animations");
+            poses.lane = lane;
+            poses.idleFrames = idle;
+            poses.leftFrames = LoadCharacterFrames("SingerLeft", 20f, SingerPivot);
+            poses.downFrames = LoadCharacterFrames("SingerDown", 20f, SingerPivot);
+            poses.upFrames = LoadCharacterFrames("SingerUp", 20f, SingerPivot);
+            poses.rightFrames = LoadCharacterFrames("SingerRight", 20f, SingerPivot);
+            poses.missFrames = LoadCharacterFrames("SingerMiss", 20f, SingerPivot);
+            poses.idleFramesPerBeat = 4;
+            poses.idleFps = 1000f / 140f;  // frame time from the GIF
+            poses.poseFps = 1000f / 140f;
+            poses.missSounds = LoadMissSounds();
+            EditorUtility.SetDirty(poses);
+
+            Undo.RecordObject(anim, "Singer animations");
+            anim.frames = idle;
+            anim.framesPerSecond = poses.idleFps;
+            anim.framesPerBeat = poses.idleFramesPerBeat;
+            EditorUtility.SetDirty(anim);
+
+            var img = anim.GetComponent<Image>();
+            Undo.RecordObject(img, "Singer animations");
+            img.sprite = idle[0];
+            img.preserveAspect = true;
+            EditorUtility.SetDirty(img);
+
+            var rt = (RectTransform)anim.transform;
+            float height = rt.rect.width * idle[0].rect.height / idle[0].rect.width;
+            if (Mathf.Abs(rt.rect.height - height) > 0.5f)
+            {
+                Undo.RecordObject(rt, "Singer animations");
+                float bottom = rt.anchoredPosition.y - rt.pivot.y * rt.rect.height;
+                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height);
+                rt.anchoredPosition = new Vector2(rt.anchoredPosition.x, bottom + rt.pivot.y * height);
+                EditorUtility.SetDirty(rt);
+            }
+            return true;
+        }
+
+        /// <summary>Loads Audio/Miss_1, Miss_2 ... (.wav, .ogg or .mp3).</summary>
+        private static AudioClip[] LoadMissSounds()
+        {
+            var clips = new List<AudioClip>();
+            for (int i = 1; i <= 16; i++)
+            {
+                AudioClip clip = null;
+                foreach (var ext in new[] { ".wav", ".ogg", ".mp3" })
+                {
+                    clip = AssetDatabase.LoadAssetAtPath<AudioClip>(AudioFolder + "/Miss_" + i + ext);
+                    if (clip != null) break;
+                }
+                if (clip == null) break;
+                clips.Add(clip);
+            }
+            return clips.ToArray();
         }
 
         private static int SetPerformerAnimations(Scene scene)
@@ -201,10 +635,12 @@ namespace PimbaStage.EditorTools
             player.jumpFrames = LoadCharacterFrames("PerformerJump", 20f, PerformerPivot);  // going up (2 frames)
             player.fallFrames = LoadCharacterFrames("PerformerFall", 20f, PerformerPivot);  // going down (2 frames)
             player.hurtFrames = LoadCharacterFrames("PerformerHurt", 20f, PerformerPivot);
+            player.doubleJumpFrames = LoadCharacterFrames("PerformerDoubleJump", 20f, PerformerPivot);
             player.idleFps = 1000f / 170f;  // frame times from the GIFs
             player.walkFps = 1000f / 170f;
             player.jumpFps = 10f;
             player.hurtFps = 1000f / 140f;
+            player.doubleJumpFps = 1000f / 130f;
             EditorUtility.SetDirty(player);
 
             var anim = player.animator;
@@ -775,6 +1211,7 @@ namespace PimbaStage.EditorTools
             Img(valance, sValance, Color.white);
 
             game.performerHeartFills = Hearts("Performer Hearts (P1)", play, new Vector2(CurtainWidth + 0.012f, 0.02f), new Vector2(0f, 0f), 3, 64f, 74f);
+            SetPerformerHeartCounter(game); // the user's counter box replaces the row when its art is there
 
             game.countdownText = Label("Countdown", play, new Vector2(0f, 0.3f), new Vector2(1f, 0.7f), "", 170, new Color(1f, 0.9f, 0.3f));
 
@@ -791,6 +1228,7 @@ namespace PimbaStage.EditorTools
             var results = UIRect("Results Panel", play, new Vector2(0.12f, 0.1f), new Vector2(0.88f, 0.86f));
             game.resultsBackground = Img(results, sRounded, new Color(0f, 0f, 0f, 0.6f), Image.Type.Sliced);
             game.loseBackground = LoadButtonSprite("Results_Lose.png", FilterMode.Bilinear);
+            game.gameOverPanel = LoadButtonSprite("Results_GameOver.png");
             game.resultsPanel = results.gameObject;
             game.resultsTitle = Label("Result", results, new Vector2(0f, 0.74f), new Vector2(1f, 0.98f), "BRAVO!", 120, new Color(1f, 0.84f, 0.2f));
             game.resultsBody = Label("Stats", results, new Vector2(0.04f, 0.04f), new Vector2(0.96f, 0.74f), "", 34, Color.white, FontStyle.Normal);
@@ -857,6 +1295,8 @@ namespace PimbaStage.EditorTools
 
             BuildMusician(panel, pulses, game.conductor);
             game.musicianHeartFills = Hearts("Singer Hearts (P2)", panel, new Vector2(0.5f, 0.012f), new Vector2(0.5f, 0f), 3, 56f, 66f);
+            var singerPoses = panel.GetComponentInChildren<SingerPoses>(true);
+            if (singerPoses != null) SetSingerStage(singerPoses.GetComponent<SpriteFrameAnimator>(), game); // platform + skull health bar
 
             game.beatPulses = pulses.ToArray();
         }
@@ -965,6 +1405,7 @@ namespace PimbaStage.EditorTools
             menu.volumeText = Label("Volume Value", panel, new Vector2(0.74f, 0.1f), new Vector2(0.9f, 0.17f), "80%", 28, gold);
 
             menu.backButton = TextButton("Back", panel, new Vector2(0.4f, 0.015f), new Vector2(0.6f, 0.085f), "BACK");
+            SetDifficultyButtons(menu); // EASY / NORMAL / HARD drawn with the pixel art, if it's in the UI folder
             panel.gameObject.SetActive(false);
         }
 
@@ -1020,12 +1461,12 @@ namespace PimbaStage.EditorTools
         /// Loads Characters/{prefix}_0.png, _1.png ... (frames taken from the user's GIFs) as crisp pixel-art sprites.
         /// Returns an empty array if there are none.
         /// </summary>
-        private static Sprite[] LoadCharacterFrames(string prefix, float pixelsPerUnit, Vector2 pivot)
+        private static Sprite[] LoadCharacterFrames(string prefix, float pixelsPerUnit, Vector2 pivot, string folder = CharacterFolder)
         {
             var frames = new List<Sprite>();
             for (int i = 0; i < 64; i++)
             {
-                string path = CharacterFolder + "/" + prefix + "_" + i + ".png";
+                string path = folder + "/" + prefix + "_" + i + ".png";
                 var importer = AssetImporter.GetAtPath(path) as TextureImporter;
                 if (importer == null) break;
 
@@ -1086,8 +1527,11 @@ namespace PimbaStage.EditorTools
 
         private static void BuildMusician(RectTransform panel, List<BeatPulse> pulses, Conductor conductor)
         {
-            // The user's yellow singer (Characters/Singer_0..3.png, 34x23 px, 4-frame GIF), shown at 7x, one loop per beat.
-            Sprite[] frames = LoadCharacterFrames("Singer", 20f, new Vector2(0.5f, 0.5f));
+            // The user's yellow singer, shown at 7x: the dance (Characters/SingerIdle_0..3.png, 34x32 px, one loop per beat),
+            // a pose for each arrow and a miss pose (SingerLeft/Down/Up/Right/Miss_0..1.png),
+            // or the older 4-frame dance only (Characters/Singer_0..3.png, 34x23 px).
+            Sprite[] frames = LoadCharacterFrames("SingerIdle", 20f, SingerPivot);
+            if (frames.Length == 0) frames = LoadCharacterFrames("Singer", 20f, SingerPivot);
             if (frames.Length > 0)
             {
                 var stand = UIRectAt("Singer", panel, new Vector2(0.5f, 0.065f), new Vector2(340f, 250f), new Vector2(0.5f, 0f));
@@ -1100,6 +1544,7 @@ namespace PimbaStage.EditorTools
                 anim.framesPerSecond = 7.7f;
                 anim.framesPerBeat = 4;
                 anim.conductor = conductor;
+                SetSingerAnimations(anim, panel.GetComponentInChildren<RhythmLane>(true));
                 Img(Px("Podium", stand, 170f, 16f, 300f, 32f), sRounded, new Color(0.38f, 0.1f, 0.12f), Image.Type.Sliced);
                 Img(Px("Podium Trim", stand, 170f, 33f, 300f, 6f), sSquare, new Color(0.86f, 0.66f, 0.26f));
                 return;

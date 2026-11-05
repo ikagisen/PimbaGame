@@ -41,6 +41,10 @@ namespace PimbaStage
         public GameObject optionsPanel;
         public Button[] performerButtons = new Button[3];
         public Button[] musicianButtons = new Button[3];
+        [Tooltip("Coloured badge shown on the chosen difficulty, in order Easy, Normal, Hard (UI/Difficulty_*_On.png)")]
+        public Sprite[] difficultyChosenArt = new Sprite[3];
+        [Tooltip("Text-only look for the difficulties that aren't chosen, in order Easy, Normal, Hard (UI/Difficulty_*_Off.png)")]
+        public Sprite[] difficultyPlainArt = new Sprite[3];
         public Text performerHint;
         public Text musicianHint;
         public ScrollRect songScroll;
@@ -50,8 +54,11 @@ namespace PimbaStage
         public Slider volumeSlider;
         public Text volumeText;
         public Button backButton;
+        [Tooltip("Opens the scoreboard. Left empty, one is made next to BACK when the game starts.")]
+        public Button scoreboardButton;
 
         public event Action PlayPressed;
+        public event Action ScoreboardPressed;
         public event Action<PimbaSong> SongChanged;
         public event Action SettingsChanged;
 
@@ -84,6 +91,8 @@ namespace PimbaStage
                 if (optionsButton != null) optionsButton.onClick.AddListener(ShowOptions);
                 if (quitButton != null) quitButton.onClick.AddListener(Quit);
                 if (backButton != null) backButton.onClick.AddListener(BackToMain);
+                if (scoreboardButton == null) scoreboardButton = MakeScoreboardButton();
+                if (scoreboardButton != null) scoreboardButton.onClick.AddListener(() => ScoreboardPressed?.Invoke());
 
                 for (int i = 0; i < performerButtons.Length; i++)
                 {
@@ -138,6 +147,42 @@ namespace PimbaStage
             Refresh();
             int i = (int)GameSettings.PerformerDifficulty;
             Select(i < performerButtons.Length ? performerButtons[i] : backButton);
+        }
+
+        /// <summary>Back to Options after looking at the scoreboard.</summary>
+        public void ReturnFromScoreboard()
+        {
+            ShowOptions();
+            Select(scoreboardButton != null ? (Selectable)scoreboardButton : backButton);
+        }
+
+        /// <summary>A SCOREBOARD button in the BACK button's style, with the two side by side where BACK was.</summary>
+        private Button MakeScoreboardButton()
+        {
+            if (backButton == null) return null;
+            var back = (RectTransform)backButton.transform;
+            var go = Instantiate(backButton.gameObject, back.parent);
+            go.name = "Scoreboard";
+            go.transform.localScale = Vector3.one;
+            go.transform.SetSiblingIndex(back.GetSiblingIndex());
+            var rect = (RectTransform)go.transform;
+            float width = back.anchorMax.x - back.anchorMin.x;
+            float centre = (back.anchorMin.x + back.anchorMax.x) * 0.5f;
+            float shift = width * 0.5f + 0.01f;
+            SetAnchorX(rect, centre - shift, width);
+            SetAnchorX(back, centre + shift, width);
+            var label = go.GetComponentInChildren<Text>(true);
+            if (label != null) label.text = "SCOREBOARD";
+            return go.GetComponent<Button>();
+        }
+
+        private static void SetAnchorX(RectTransform rect, float centre, float width)
+        {
+            Vector2 min = rect.anchorMin, max = rect.anchorMax;
+            min.x = centre - width * 0.5f;
+            max.x = centre + width * 0.5f;
+            rect.anchorMin = min;
+            rect.anchorMax = max;
         }
 
         public void Hide()
@@ -300,10 +345,33 @@ namespace PimbaStage
             if (volumeText != null) volumeText.text = Mathf.RoundToInt(GameSettings.Volume * 100f) + "%";
         }
 
-        private static void ShowChoice(Button[] buttons, int chosen)
+        private void ShowChoice(Button[] buttons, int chosen)
         {
             for (int i = 0; i < buttons.Length; i++)
-                if (buttons[i] != null) SetLook(buttons[i], i == chosen);
+            {
+                if (buttons[i] == null) continue;
+                var coloured = Art(difficultyChosenArt, i);
+                var plain = Art(difficultyPlainArt, i);
+                if (coloured != null && plain != null) SetArtLook(buttons[i], i == chosen ? coloured : plain);
+                else SetLook(buttons[i], i == chosen);
+            }
+        }
+
+        private static Sprite Art(Sprite[] sprites, int i) => sprites != null && i < sprites.Length ? sprites[i] : null;
+
+        /// <summary>Difficulty drawn as pixel art: the coloured badge when it's chosen, just the text when it isn't.</summary>
+        private static void SetArtLook(Button button, Sprite sprite)
+        {
+            var image = button.targetGraphic as Image;
+            if (image != null)
+            {
+                image.sprite = sprite;
+                image.type = Image.Type.Simple;
+                image.preserveAspect = true;
+                image.color = Color.white;
+            }
+            var label = button.GetComponentInChildren<Text>(true);
+            if (label != null) label.gameObject.SetActive(false); // the words are in the art
         }
 
         private static void SetLook(Button button, bool chosen)

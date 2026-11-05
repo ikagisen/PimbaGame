@@ -54,6 +54,8 @@ namespace PimbaStage
         public Sprite[] fallFrames = new Sprite[0];
         [Tooltip("Plays once when he gets damaged.")]
         public Sprite[] hurtFrames = new Sprite[0];
+        [Tooltip("Plays once on the double jump (the second jump in mid-air).")]
+        public Sprite[] doubleJumpFrames = new Sprite[0];
         [Tooltip("Frames per second (the idle GIF uses 170 ms per frame).")]
         public float idleFps = 5.9f;
         [Tooltip("Frames per second at walking pace (the walk GIF uses 170 ms per frame).")]
@@ -61,6 +63,8 @@ namespace PimbaStage
         public float jumpFps = 10f;
         [Tooltip("Frames per second (the hurt GIF uses 140 ms per frame).")]
         public float hurtFps = 7.1f;
+        [Tooltip("Frames per second (the double jump GIF uses 130 ms per frame).")]
+        public float doubleJumpFps = 7.7f;
 
         public bool ControlsEnabled { get; set; }
         public bool Invulnerable => Time.time < invulnerableUntil;
@@ -82,7 +86,8 @@ namespace PimbaStage
         private bool jumpHeld, onGround, bouncing;
         private int facing = 1, airJumpsLeft;
         private float lastGroundedTime = -999f, lastJumpPressedTime = -999f, lastJumpTime = -999f;
-        private float lastVerticalSpeed, invulnerableUntil, hurtUntil;
+        private float lastVerticalSpeed, invulnerableUntil, hurtUntil, doubleJumpUntil;
+        private bool doubleJumpRestart;
         private Sprite[] defaultFrames;
         private float defaultFps;
         private Vector2 carryVelocity;
@@ -154,6 +159,7 @@ namespace PimbaStage
             {
                 lastGroundedTime = Time.time;
                 airJumpsLeft = extraAirJumps;
+                doubleJumpUntil = 0f;
                 if (!wasGrounded && lastVerticalSpeed < -8f) squash = new Vector2(1.3f, 0.7f);
             }
 
@@ -179,6 +185,7 @@ namespace PimbaStage
                 {
                     airJumpsLeft--;
                     Jump(ref v);
+                    StartDoubleJumpAnimation();
                 }
             }
 
@@ -235,10 +242,19 @@ namespace PimbaStage
 
             Sprite[] clip;
             float fps, speed = 1f;
+            bool loop = true, restart = false;
             if (Hurting)
             {
                 clip = hurtFrames;
                 fps = hurtFps;
+            }
+            else if (airborne && Time.time < doubleJumpUntil)
+            {
+                clip = doubleJumpFrames;
+                fps = doubleJumpFps;
+                loop = false;
+                restart = doubleJumpRestart;
+                doubleJumpRestart = false;
             }
             else if (airborne)
             {
@@ -263,10 +279,19 @@ namespace PimbaStage
                 // No art for this move: keep the one looping animation, sped up when moving.
                 clip = defaultFrames;
                 fps = defaultFps;
+                loop = true;
                 speed = airborne ? 1.4f : moving ? Mathf.Lerp(0.9f, 1.6f, run / Mathf.Max(0.1f, maxSpeed)) : 0.45f;
             }
             animator.SpeedMultiplier = speed;
-            animator.Play(clip, fps);
+            animator.Play(clip, fps, restart, loop);
+        }
+
+        /// <summary>Starts the double jump flip (plays once, cut short by landing or getting hurt).</summary>
+        private void StartDoubleJumpAnimation()
+        {
+            if (doubleJumpFrames == null || doubleJumpFrames.Length == 0) return;
+            doubleJumpUntil = Time.time + doubleJumpFrames.Length / Mathf.Max(0.1f, doubleJumpFps);
+            doubleJumpRestart = true;
         }
 
         private static Sprite[] Either(Sprite[] first, Sprite[] second) =>
@@ -277,6 +302,7 @@ namespace PimbaStage
         {
             if (hurtFrames == null || hurtFrames.Length == 0) return;
             hurtUntil = Time.time + hurtFrames.Length / Mathf.Max(0.1f, hurtFps);
+            doubleJumpUntil = 0f;
             if (animator != null)
             {
                 animator.SpeedMultiplier = 1f;
