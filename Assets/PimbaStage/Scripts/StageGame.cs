@@ -16,6 +16,7 @@ namespace PimbaStage
         public static StageGame Instance { get; private set; }
 
         private static bool skipMenu;
+        private static bool openMapsOnStart;
 
         [Header("Songs (picked in Options)")]
         public List<PimbaSong> songs = new List<PimbaSong>();
@@ -67,7 +68,7 @@ namespace PimbaStage
         public RectTransform curtainRight;
         public BeatPulse[] beatPulses = new BeatPulse[0];
 
-        private enum State { Menu, Countdown, Playing, Paused, Ended }
+        private enum State { Menu, Countdown, Playing, Paused, Ended, Creator }
 
         private State state = State.Menu, stateBeforePause;
         private PimbaSong song;
@@ -79,6 +80,10 @@ namespace PimbaStage
         private bool layoutGameOver;
         private Image gameOverImage;
         private float leftOpenMax, rightOpenMin;
+        private MapStage mapStage;
+        private MapCreator creator;
+        private MapsScreen mapsScreen;
+        private StageMap customMap;
 
         private void Awake()
         {
@@ -123,16 +128,24 @@ namespace PimbaStage
                 menu.SettingsChanged += ApplyPerformerDifficulty;
             }
             SetUpScoreboard();
+            SetUpMaps();
+            SetUpPixelLook();
             song = CurrentSong();
             if (bannerText != null) bannerText.text = song.BannerText;
             ApplyPerformerDifficulty();
 
+            bool openMaps = openMapsOnStart;
+            openMapsOnStart = false;
             if (skipMenu)
             {
                 skipMenu = false;
                 StartShow();
             }
-            else ShowMenu();
+            else
+            {
+                ShowMenu();
+                if (openMaps) OpenMaps();
+            }
         }
 
         private void SetUpScoreboard()
@@ -152,6 +165,70 @@ namespace PimbaStage
                 };
         }
 
+        // ------------------------------------------------------------------ player-made maps (3D version)
+
+        private void SetUpMaps()
+        {
+            mapStage = gameObject.AddComponent<MapStage>();
+            mapStage.Init(player);
+            if (!mapStage.Available || menu == null || resultsPanel == null) return; // the 2D version
+            var playfield = resultsPanel.transform.parent as RectTransform;
+            Font font = menu.font != null ? menu.font : resultsBody != null ? resultsBody.font : null;
+            creator = gameObject.AddComponent<MapCreator>();
+            creator.Setup(this, mapStage, scroller, playfield, font, menu.entrySprite);
+            mapsScreen = gameObject.AddComponent<MapsScreen>();
+            mapsScreen.Setup(this, playfield, font, menu.entrySprite);
+            menu.AddMapsButton();
+            menu.MapsPressed += OpenMaps;
+        }
+
+        /// <summary>3D version: chunky pixels for the 3D parts, like the pixel-art characters (unless Pixelated 3D is on the camera, maybe switched off).</summary>
+        private void SetUpPixelLook()
+        {
+            if (scroller == null || scroller.cam == null || scroller.cam.GetComponent<Pixelated3D>() != null) return;
+            foreach (var root in gameObject.scene.GetRootGameObjects())
+                if (root.name.StartsWith("3D Set"))
+                {
+                    scroller.cam.gameObject.AddComponent<Pixelated3D>();
+                    return;
+                }
+        }
+
+        private void OpenMaps()
+        {
+            if (mapsScreen == null || mapsScreen.BlocksInput || state != State.Menu) return;
+            if (menu != null) menu.Hide();
+            mapsScreen.Show(() => { if (menu != null) menu.ReturnFromMaps(); });
+        }
+
+        /// <summary>The map creator, on the open stage. map = null: a new, empty map.</summary>
+        public void OpenCreator(StageMap map)
+        {
+            if (creator == null) return;
+            state = State.Creator;
+            if (menu != null) menu.Hide();
+            if (player != null) player.gameObject.SetActive(false);
+            if (bannerText != null) bannerText.text = "";
+            curtainTarget = 0f;
+            creator.Begin(map);
+        }
+
+        /// <summary>Plays a show on a saved map straight away (TEST in the map creator).</summary>
+        public void PlayMapNow(string mapName)
+        {
+            GameSettings.MapName = mapName;
+            skipMenu = true;
+            ReloadScene();
+        }
+
+        /// <summary>Leaves the map creator, back to the MAPS window.</summary>
+        public void LeaveCreator()
+        {
+            openMapsOnStart = true;
+            skipMenu = false;
+            ReloadScene();
+        }
+
         private PimbaSong CurrentSong()
         {
             var chosen = menu != null ? menu.SelectedSong : null;
@@ -160,6 +237,7 @@ namespace PimbaStage
 
         private void ApplyPerformerDifficulty()
         {
+            if (mapStage != null && mapStage.CustomApplied) return; // a player-made map has none of these
             var difficulty = GameSettings.PerformerDifficulty;
             foreach (var filter in difficultyObjects)
                 if (filter != null) filter.Apply(difficulty);
@@ -180,6 +258,12 @@ namespace PimbaStage
             song = CurrentSong();
             if (menu != null) menu.Hide();
             if (bannerText != null) bannerText.text = song.BannerText;
+            customMap = mapStage != null && mapStage.Available ? MapStorage.Find(GameSettings.MapName) : null;
+            if (customMap != null)
+            {
+                mapStage.ApplyLayout(customMap); // the player-made map instead of the original stage
+                totalRoses = 0;
+            }
             ApplyPerformerDifficulty();
 
             AudioClip clip = song.music;
@@ -254,7 +338,8 @@ namespace PimbaStage
                         resultsPanel.SetActive(true);
                         if (layoutGameOver) LayoutGameOver();
                         // Both players write their names in a window in front of the results, then CONTINUE.
-                        if (scoreboard != null && song != null && !song.recordChart) scoreboard.ShowNameEntry(score, song.title);
+                        // (only on the original stage: player-made maps would not be a fair comparison)
+                        if (scoreboard != null && song != null && !song.recordChart && customMap == null) scoreboard.ShowNameEntry(score, song.title);
                     }
                     if (scoreboard != null && scoreboard.BlocksGameInput) break;
                     if (enter || restart) Restart();
@@ -442,6 +527,7 @@ namespace PimbaStage
                     + "Accuracy " + accuracy.ToString("0.0") + "%     Max combo " + lane.MaxCombo + "\n"
                     + "Roses " + roses + "/" + totalRoses + "     Hearts lost " + heartsLost + "\n"
                     + "Performer " + GameSettings.PerformerDifficulty + "     Singer " + GameSettings.MusicianDifficulty + "\n";
+                if (customMap != null) body += "Map  " + customMap.name + "\n";
                 if (chartPath != null) body += "\nChart saved: " + chartPath + "\n";
                 body += "\nENTER / R  play again        ESC  main menu";
                 resultsBody.text = body;

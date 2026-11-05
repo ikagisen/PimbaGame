@@ -11,6 +11,7 @@ namespace PimbaStage
         private const string MusicianKey = "PimbaStage.MusicianDifficulty";
         private const string SongKey = "PimbaStage.Song";
         private const string VolumeKey = "PimbaStage.Volume";
+        private const string MapKey = "PimbaStage.Map";
 
         /// <summary>Player 1: how many obstacles are on stage.</summary>
         public static Difficulty PerformerDifficulty
@@ -31,6 +32,13 @@ namespace PimbaStage
         {
             get => PlayerPrefs.GetString(SongKey, "");
             set { PlayerPrefs.SetString(SongKey, value); PlayerPrefs.Save(); }
+        }
+
+        /// <summary>Name of the player-made map to play on (3D version); empty = the original stage.</summary>
+        public static string MapName
+        {
+            get => PlayerPrefs.GetString(MapKey, "");
+            set { PlayerPrefs.SetString(MapKey, value ?? ""); PlayerPrefs.Save(); }
         }
 
         /// <summary>Master volume 0-1 (applied straight away).</summary>

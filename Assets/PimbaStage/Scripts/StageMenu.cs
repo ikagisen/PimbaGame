@@ -59,6 +59,10 @@ namespace PimbaStage
 
         public event Action PlayPressed;
         public event Action ScoreboardPressed;
+        public event Action MapsPressed;
+
+        [Tooltip("MAPS button in the main menu (3D version, made when the game starts).")]
+        public Button mapsButton;
         public event Action<PimbaSong> SongChanged;
         public event Action SettingsChanged;
 
@@ -147,6 +151,54 @@ namespace PimbaStage
             Refresh();
             int i = (int)GameSettings.PerformerDifficulty;
             Select(i < performerButtons.Length ? performerButtons[i] : backButton);
+        }
+
+        /// <summary>
+        /// Adds the MAPS button to the main menu (the 3D version, where players make maps), between OPTIONS and QUIT.
+        /// </summary>
+        public void AddMapsButton()
+        {
+            if (mapsButton != null || optionsButton == null) return;
+            var options = (RectTransform)optionsButton.transform;
+            var rt = RuntimeUI.MakeRectAt("Maps", options.parent, options.anchorMin, new Vector2(232f, 96f), Vector2.zero);
+            rt.SetSiblingIndex(options.GetSiblingIndex() + 1);
+            var outer = RuntimeUI.AddImage(rt, entrySprite, new Color(0.08f, 0.17f, 0.42f), true);
+            var fill = RuntimeUI.MakeRect("Fill", rt, Vector2.zero, Vector2.one);
+            fill.offsetMin = new Vector2(6f, 6f);
+            fill.offsetMax = new Vector2(-6f, -6f);
+            RuntimeUI.AddImage(fill, entrySprite, new Color(0.24f, 0.5f, 0.95f));
+            RuntimeUI.AddText("Label", rt, Vector2.zero, Vector2.one, "MAPS", font, 54, Color.white);
+            mapsButton = rt.gameObject.AddComponent<Button>();
+            mapsButton.targetGraphic = outer;
+            var colors = mapsButton.colors;
+            colors.normalColor = new Color(0.9f, 0.9f, 0.9f);
+            colors.highlightedColor = Color.white;
+            colors.selectedColor = Color.white;
+            colors.pressedColor = new Color(0.75f, 0.75f, 0.75f);
+            mapsButton.colors = colors;
+            rt.gameObject.AddComponent<MenuButtonFX>();
+            mapsButton.onClick.AddListener(() => MapsPressed?.Invoke());
+
+            // PLAY on top, OPTIONS and MAPS side by side, QUIT below.
+            SetAnchor(playButton, 0.5f, 0.65f);
+            SetAnchor(optionsButton, 0.355f, 0.465f);
+            SetAnchor(mapsButton, 0.645f, 0.465f);
+            SetAnchor(quitButton, 0.5f, 0.28f);
+            Refresh();
+        }
+
+        private static void SetAnchor(Selectable s, float x, float y)
+        {
+            if (s == null) return;
+            var r = (RectTransform)s.transform;
+            r.anchorMin = r.anchorMax = new Vector2(x, y);
+        }
+
+        /// <summary>Back to the main menu after the MAPS window.</summary>
+        public void ReturnFromMaps()
+        {
+            ShowMain();
+            Select(mapsButton != null ? (Selectable)mapsButton : playButton);
         }
 
         /// <summary>Back to Options after looking at the scoreboard.</summary>
@@ -334,8 +386,11 @@ namespace PimbaStage
             if (summaryText != null)
             {
                 string songName = song != null ? song.title : "-";
-                summaryText.text = "SONG: " + songName + "      PERFORMER: " + ((Difficulty)p1).ToString().ToUpperInvariant()
-                                 + "      SINGER: " + ((Difficulty)p2).ToString().ToUpperInvariant();
+                string map = mapsButton != null ? GameSettings.MapName : "";
+                string gap = string.IsNullOrEmpty(map) ? "      " : "    ";
+                summaryText.text = "SONG: " + songName + gap + "PERFORMER: " + ((Difficulty)p1).ToString().ToUpperInvariant()
+                                 + gap + "SINGER: " + ((Difficulty)p2).ToString().ToUpperInvariant()
+                                 + (string.IsNullOrEmpty(map) ? "" : gap + "MAP: " + map);
             }
             RefreshVolume();
         }

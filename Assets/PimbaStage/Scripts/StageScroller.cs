@@ -78,6 +78,14 @@ namespace PimbaStage
 
         public void Bop() => bop = bopDegrees;
 
+        /// <summary>Puts the view straight at camera X (the map creator moves the view itself).</summary>
+        public void JumpTo(float x)
+        {
+            targetX = x;
+            Vector3 p = cam.transform.position;
+            cam.transform.position = new Vector3(x, p.y, p.z);
+        }
+
         private void LateUpdate()
         {
             float dt = Time.deltaTime;
