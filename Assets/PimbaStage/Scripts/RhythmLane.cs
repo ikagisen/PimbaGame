@@ -43,6 +43,24 @@ namespace PimbaStage
         public Text comboText;
         public Text modeText;
 
+        [Header("Rating words (UI/Rating_*.png, wired up by the stage builder)")]
+        [Tooltip("Pictures shown instead of the rating text, in order: Amazing, Good, OK (Meh), Bad, Miss (Horrible). Empty = the text.")]
+        public Sprite[] ratingSprites = new Sprite[0];
+        [Tooltip("Screen pixels per art pixel for the rating pictures (whole numbers keep the pixels square).")]
+        public float ratingPixelScale = 3f;
+
+        [Header("Combo counter (UI/Combo_*.png, wired up by the stage builder)")]
+        [Tooltip("The 'Combo x' picture shown in front of the number. Empty = the text.")]
+        public Sprite comboLabelSprite;
+        [Tooltip("Pictures of the digits 0 to 9.")]
+        public Sprite[] comboDigitSprites = new Sprite[0];
+        [Tooltip("Screen pixels per art pixel for the combo counter.")]
+        public float comboPixelScale = 2f;
+        [Tooltip("Art pixels between the pictures.")]
+        public float comboSpacing = 1f;
+        [Tooltip("Moves the combo counter up (+) or down (-) from where the combo text was.")]
+        public float comboNudgeY;
+
         [Header("Gameplay")]
         [Tooltip("Off = one column of mixed arrows (like the sketch). On = four columns like Friday Night Funkin'.")]
         public bool fourLanes;
@@ -96,6 +114,9 @@ namespace PimbaStage
         private float ratingAge = 99f, flashAge = 99f;
         private Color flashColor = Color.white;
         private RectTransform punched;
+        private Image ratingImage;
+        private RectTransform comboRow;
+        private readonly List<Image> comboImages = new List<Image>();
 
         private float CurrentNoteSize => fourLanes ? fourLaneNoteSize : noteSize;
         private double Window => badMs / 1000.0;
@@ -106,6 +127,90 @@ namespace PimbaStage
             if (ratingText != null) ratingText.text = "";
             if (comboText != null) comboText.text = "";
             UpdateModeText();
+        }
+
+        private Sprite RatingSprite(Judgement j)
+        {
+            int i = (int)j;
+            return ratingSprites != null && i >= 0 && i < ratingSprites.Length ? ratingSprites[i] : null;
+        }
+
+        private bool HasComboArt
+        {
+            get
+            {
+                if (comboLabelSprite == null || comboDigitSprites == null || comboDigitSprites.Length < 10) return false;
+                for (int i = 0; i < 10; i++)
+                    if (comboDigitSprites[i] == null) return false;
+                return true;
+            }
+        }
+
+        /// <summary>"Combo x" and the number, drawn with the pictures (or the old text when they're missing). Shown from 3 in a row.</summary>
+        private void ShowCombo()
+        {
+            bool show = Combo >= 3;
+            if (!HasComboArt || comboText == null)
+            {
+                if (comboText != null) comboText.text = show ? Combo + " COMBO" : "";
+                return;
+            }
+            comboText.text = "";
+            if (comboRow == null)
+            {
+                var go = new GameObject("Combo Pictures", typeof(RectTransform));
+                go.layer = comboText.gameObject.layer;
+                comboRow = (RectTransform)go.transform;
+                comboRow.SetParent(comboText.rectTransform, false);
+                comboRow.anchorMin = comboRow.anchorMax = comboRow.pivot = new Vector2(0.5f, 0.5f);
+            }
+            comboRow.anchoredPosition = new Vector2(0f, comboNudgeY);
+
+            string digits = show ? Combo.ToString(CultureInfo.InvariantCulture) : "";
+            int count = show ? digits.Length + 1 : 0;
+            while (comboImages.Count < count)
+            {
+                var go = new GameObject("Combo Picture", typeof(RectTransform), typeof(Image));
+                go.layer = comboRow.gameObject.layer;
+                var rect = (RectTransform)go.transform;
+                rect.SetParent(comboRow, false);
+                rect.anchorMin = rect.anchorMax = rect.pivot = Vector2.zero;
+                var image = go.GetComponent<Image>();
+                image.raycastTarget = false;
+                comboImages.Add(image);
+            }
+
+            float gap = comboSpacing * comboPixelScale, x = 0f, height = 0f;
+            for (int i = 0; i < comboImages.Count; i++)
+            {
+                var image = comboImages[i];
+                image.enabled = i < count;
+                if (!image.enabled) continue;
+                var sprite = i == 0 ? comboLabelSprite : comboDigitSprites[digits[i - 1] - '0'];
+                var size = sprite.rect.size * comboPixelScale;
+                image.sprite = sprite;
+                image.color = Color.white;
+                image.rectTransform.sizeDelta = size;
+                image.rectTransform.anchoredPosition = new Vector2(x, 0f);
+                x += size.x + gap;
+                height = Mathf.Max(height, size.y);
+            }
+            comboRow.sizeDelta = new Vector2(count > 0 ? x - gap : 0f, height);
+        }
+
+        /// <summary>The picture sits on the rating text, so it moves and pops with it.</summary>
+        private void MakeRatingImage()
+        {
+            if (ratingImage != null || ratingText == null) return;
+            var go = new GameObject("Rating Picture", typeof(RectTransform), typeof(Image));
+            go.layer = ratingText.gameObject.layer;
+            var rect = (RectTransform)go.transform;
+            rect.SetParent(ratingText.rectTransform, false);
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            ratingImage = go.GetComponent<Image>();
+            ratingImage.raycastTarget = false;
+            ratingImage.enabled = false;
         }
 
         public void Begin(Conductor songConductor, List<NoteData> notes, bool record)
@@ -281,6 +386,7 @@ namespace PimbaStage
                 Flash(dir);
                 double beat = Math.Round(conductor.Beat * 4.0) / 4.0;
                 recorded.Add(beat.ToString("0.##", CultureInfo.InvariantCulture) + " " + PimbaSong.DirLetter(dir));
+                if (ratingImage != null) ratingImage.enabled = false;
                 if (ratingText != null)
                 {
                     ratingText.text = "REC " + PimbaSong.DirLetter(dir);
@@ -436,12 +542,24 @@ namespace PimbaStage
         private void ShowRating(Judgement j)
         {
             ratingAge = 0f;
+            var picture = RatingSprite(j);
+            if (picture != null) MakeRatingImage();
+            if (ratingImage != null)
+            {
+                ratingImage.enabled = picture != null;
+                if (picture != null)
+                {
+                    ratingImage.sprite = picture;
+                    ratingImage.rectTransform.sizeDelta = picture.rect.size * ratingPixelScale;
+                    ratingImage.color = Color.white;
+                }
+            }
             if (ratingText != null)
             {
-                ratingText.text = RatingLabels[(int)j];
+                ratingText.text = picture != null ? "" : RatingLabels[(int)j];
                 ratingText.color = RatingColors[(int)j];
             }
-            if (comboText != null) comboText.text = Combo >= 3 ? Combo + " COMBO" : "";
+            ShowCombo();
         }
 
         private void AnimateFeedback()
@@ -458,11 +576,28 @@ namespace PimbaStage
                 c.a = Mathf.Clamp01(1.5f - ratingAge * 1.6f);
                 ratingText.color = c;
             }
+            if (ratingImage != null && ratingImage.enabled)
+            {
+                var c = ratingImage.color;
+                c.a = Mathf.Clamp01(1.5f - ratingAge * 1.6f);
+                ratingImage.color = c;
+            }
             if (comboText != null)
             {
                 var c = comboText.color;
                 c.a = Mathf.Clamp01(1.5f - ratingAge * 1.6f);
                 comboText.color = c;
+            }
+            if (comboImages.Count > 0)
+            {
+                float alpha = Mathf.Clamp01(1.5f - ratingAge * 1.6f);
+                foreach (var image in comboImages)
+                {
+                    if (!image.enabled) continue;
+                    var c = image.color;
+                    c.a = alpha;
+                    image.color = c;
+                }
             }
             if (hitFlash != null)
             {

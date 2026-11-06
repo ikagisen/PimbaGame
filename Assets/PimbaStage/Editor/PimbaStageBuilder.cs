@@ -565,6 +565,8 @@ namespace PimbaStage.EditorTools
             poses.upFrames = LoadCharacterFrames("SingerUp", 20f, SingerPivot);
             poses.rightFrames = LoadCharacterFrames("SingerRight", 20f, SingerPivot);
             poses.missFrames = LoadCharacterFrames("SingerMiss", 20f, SingerPivot);
+            poses.deathFrames = LoadCharacterFrames("SingerDeath", 20f, SingerPivot);
+            poses.deathFps = SingerDeathFps;
             poses.idleFramesPerBeat = 4;
             poses.idleFps = 1000f / 140f;  // frame time from the GIF
             poses.poseFps = 1000f / 140f;
@@ -614,6 +616,254 @@ namespace PimbaStage.EditorTools
             return clips.ToArray();
         }
 
+        private const float PerformerDeathFps = 1000f / 170f; // p1Death.gif: 170 ms per frame
+        private const float SingerDeathFps = 10f;             // p2Death.gif has no frame times: 100 ms, as browsers play it
+
+        /// <summary>
+        /// Gives Player 1 and Player 2 their death scenes (Characters/PerformerDeath_*.png, SingerDeath_*.png), played by the
+        /// player who lost before the curtains close. Only the death animations are set, so other scene edits are kept.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply Death Scenes (keeps scene edits)")]
+        public static void ApplyDeathScenes()
+        {
+            if (StopIfPlaying()) return;
+            if (LoadCharacterFrames("PerformerDeath", 20f, PerformerPivot).Length == 0 && LoadCharacterFrames("SingerDeath", 20f, SingerPivot).Length == 0)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put PerformerDeath_0.png ... and SingerDeath_0.png ... in " + CharacterFolder + " first.", "OK");
+                return;
+            }
+            ApplyToScenes(SetDeathScenes, "death scenes", "performer or singer");
+        }
+
+        private static int SetDeathScenes(Scene scene)
+        {
+            var performerDeath = LoadCharacterFrames("PerformerDeath", 20f, PerformerPivot);
+            var singerDeath = LoadCharacterFrames("SingerDeath", 20f, SingerPivot);
+            int count = 0;
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                foreach (var player in root.GetComponentsInChildren<StagePlayer>(true))
+                {
+                    Undo.RecordObject(player, "Death scenes");
+                    player.deathFrames = performerDeath;
+                    player.deathFps = PerformerDeathFps;
+                    EditorUtility.SetDirty(player);
+                    count++;
+                }
+                foreach (var singer in root.GetComponentsInChildren<SingerPoses>(true))
+                {
+                    Undo.RecordObject(singer, "Death scenes");
+                    singer.deathFrames = singerDeath;
+                    singer.deathFps = SingerDeathFps;
+                    EditorUtility.SetDirty(singer);
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        private static readonly Color[] LightColors =
+        {
+            new Color(1f, 0.95f, 0.8f), new Color(1f, 0.45f, 0.75f), new Color(0.4f, 0.9f, 1f),
+            new Color(1f, 0.7f, 0.3f), new Color(0.7f, 0.5f, 1f)
+        };
+
+        private const float LightArtScale = 4f; // the 34x34 px lamp shown at 136x136
+        private const int LightArtCount = 15;    // side by side, so the bars join into one truss; trimmed at the stage's edges
+        private const float LightArtTop = 0.88f; // where the valance ends
+
+        /// <summary>
+        /// Hangs the user's stage lamp (UI/StageLight.png) side by side across the whole stage, so their bars join into one truss,
+        /// with a coloured beam under every lamp, and puts UI/P2Background.png behind Player 2's panel.
+        /// Only the lights and the panel background are replaced, so other scene edits are kept.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply Stage Lights and P2 Background (keeps scene edits)")]
+        public static void ApplyStageLightsAndBackground()
+        {
+            if (StopIfPlaying()) return;
+            if (LoadButtonSprite("StageLight.png") == null && LoadButtonSprite("P2Background.png") == null)
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put StageLight.png and P2Background.png in " + ButtonFolder + " first.", "OK");
+                return;
+            }
+            ApplyToScenes(SetStageArt, "stage lights and P2 background", "stage");
+        }
+
+        private static int SetStageArt(Scene scene)
+        {
+            int count = 0;
+            foreach (var root in scene.GetRootGameObjects())
+                foreach (var game in root.GetComponentsInChildren<StageGame>(true))
+                {
+                    if (SetStageLights(game)) count++;
+                    if (game.lane != null && SetPanelBackground(game.lane.transform.parent as RectTransform)) count++;
+                }
+            return count;
+        }
+
+        private static bool SetStageLights(StageGame game)
+        {
+            var lamp = LoadButtonSprite("StageLight.png");
+            var play = game.curtainLeft != null ? game.curtainLeft.parent as RectTransform : null;
+            if (lamp == null || play == null) return false;
+
+            // The old lamps, bar and beams go; the new row takes the old bar's place (in front of the banner, behind the curtains).
+            var beams = play.Find("Light Beams") as RectTransform;
+            var doomed = new List<GameObject>();
+            int index = -1;
+            foreach (Transform child in play)
+                if (child.name == "Light Bar" || child.name == "Stage Light" || child.name == "Stage Lights")
+                {
+                    if (index < 0) index = child.GetSiblingIndex();
+                    doomed.Add(child.gameObject);
+                }
+            if (beams != null)
+                foreach (Transform child in beams) doomed.Add(child.gameObject);
+
+            Sprite cone = null;
+            var removed = new HashSet<BeatPulse>();
+            foreach (var go in doomed)
+            {
+                foreach (var p in go.GetComponentsInChildren<BeatPulse>(true)) removed.Add(p);
+                var coneImage = go.name == "Beam" ? go.GetComponent<Image>() : null;
+                if (cone == null && coneImage != null) cone = coneImage.sprite;
+            }
+            if (cone == null) cone = AssetDatabase.LoadAssetAtPath<Sprite>(Root + "/Sprites/PS_LightCone.png");
+
+            Undo.RecordObject(game, "Stage lights");
+            var kept = new List<BeatPulse>();
+            if (game.beatPulses != null)
+                foreach (var p in game.beatPulses)
+                    if (p != null && !removed.Contains(p)) kept.Add(p);
+            foreach (var go in doomed) Undo.DestroyObjectImmediate(go);
+
+            if (beams == null)
+            {
+                beams = UIRect("Light Beams", play, Vector2.zero, Vector2.one);
+                Undo.RegisterCreatedObjectUndo(beams.gameObject, "Stage lights");
+                beams.SetAsFirstSibling();
+            }
+            if (beams.GetComponent<RectMask2D>() == null) Undo.AddComponent<RectMask2D>(beams.gameObject);
+
+            var row = UIRect("Stage Lights", play, Vector2.zero, Vector2.one);
+            row.gameObject.AddComponent<RectMask2D>(); // the row is wider than the stage, so it's trimmed at the stage's edges
+            row.SetSiblingIndex(index >= 0 ? Mathf.Min(index, play.childCount - 1) : game.curtainLeft.GetSiblingIndex());
+            Undo.RegisterCreatedObjectUndo(row.gameObject, "Stage lights");
+
+            Vector2 size = lamp.rect.size * LightArtScale;
+            float stageWidth = 1920f * PlayfieldWidth;
+            for (int i = 0; i < LightArtCount; i++)
+            {
+                float x = (i - (LightArtCount - 1) * 0.5f) * size.x;
+                var rt = UIRectAt("Stage Light", row, new Vector2(0.5f, LightArtTop), size, new Vector2(0.5f, 1f));
+                rt.anchoredPosition = new Vector2(x, 7f * LightArtScale); // the art's bar starts 8 px down: its top tucks 1 px under the valance
+                Img(rt, lamp, Color.white);
+
+                // Each beam starts behind its lamp's round body and leans towards the middle of the stage, like before.
+                var beam = UIRectAt("Beam", beams, new Vector2(0.5f, LightArtTop), new Vector2(240f, 800f), new Vector2(0.5f, 1f));
+                beam.anchoredPosition = new Vector2(x, (7f - 15f) * LightArtScale);
+                beam.localEulerAngles = new Vector3(0f, 0f, -x / stageWidth * 40f);
+                var c = LightColors[i % LightColors.Length];
+                var img = Img(beam, cone, new Color(c.r, c.g, c.b, 0.09f));
+                var pulse = beam.gameObject.AddComponent<BeatPulse>();
+                pulse.punch = Vector3.zero;
+                pulse.everyNBeats = 2;
+                pulse.beatOffset = i % 2;
+                pulse.graphic = img;
+                pulse.flashAlpha = 0.12f;
+                pulse.palette = Rotate(LightColors, i);
+                Undo.RegisterCreatedObjectUndo(beam.gameObject, "Stage lights");
+                kept.Add(pulse);
+            }
+
+            game.beatPulses = kept.ToArray();
+            EditorUtility.SetDirty(game);
+            return true;
+        }
+
+        /// <summary>Fills Player 2's panel with UI/P2Background.png, pixels kept square (the picture is trimmed to the panel's shape).</summary>
+        private static bool SetPanelBackground(RectTransform panel)
+        {
+            var art = LoadButtonSprite("P2Background.png");
+            if (art == null || panel == null) return false;
+            var old = panel.Find("Background Art");
+            if (old != null) Undo.DestroyObjectImmediate(old.gameObject);
+
+            var clip = UIRect("Background Art", panel, Vector2.zero, Vector2.one);
+            clip.gameObject.AddComponent<RectMask2D>();
+            clip.SetAsFirstSibling();
+            var picture = UIRect("Picture", clip, Vector2.zero, Vector2.one);
+            Img(picture, art, Color.white);
+            var fit = picture.gameObject.AddComponent<AspectRatioFitter>();
+            fit.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent;
+            fit.aspectRatio = art.rect.width / art.rect.height;
+            Undo.RegisterCreatedObjectUndo(clip.gameObject, "P2 background");
+            return true;
+        }
+
+        // Same order as the Judgement enum: Amazing, Good, OK, Bad, Miss.
+        private static readonly string[] RatingArtNames = { "Amazing", "Good", "Meh", "Bad", "Horrible" };
+
+        /// <summary>
+        /// Shows Player 2's hit ratings as the pixel-art words in UI/Rating_*.png (Amazing / Good / Meh / Bad / Horrible)
+        /// and the combo counter as UI/Combo_Label.png ("Combo x") plus UI/Combo_0..9.png, instead of text.
+        /// Only the pictures are set, so other scene edits are kept.
+        /// </summary>
+        [MenuItem("Tools/Pimba Stage/Apply Rating Words and Combo (keeps scene edits)")]
+        public static void ApplyRatingWords()
+        {
+            if (StopIfPlaying()) return;
+            if (System.Array.IndexOf(LoadRatingArt(), null) >= 0 && !LoadComboArt(out _, out _))
+            {
+                EditorUtility.DisplayDialog("Pimba Stage", "Put Rating_Amazing.png ... Rating_Horrible.png, or Combo_Label.png and Combo_0.png ... Combo_9.png, in " + ButtonFolder + " first.", "OK");
+                return;
+            }
+            ApplyToScenes(SetRatingWords, "rating words and combo counter", "arrow lane");
+        }
+
+        private static Sprite[] LoadRatingArt()
+        {
+            var sprites = new Sprite[RatingArtNames.Length];
+            for (int i = 0; i < sprites.Length; i++)
+                sprites[i] = LoadButtonSprite("Rating_" + RatingArtNames[i] + ".png");
+            return sprites;
+        }
+
+        private static int SetRatingWords(Scene scene)
+        {
+            int count = 0;
+            foreach (var root in scene.GetRootGameObjects())
+                foreach (var lane in root.GetComponentsInChildren<RhythmLane>(true))
+                    if (SetRatingWords(lane)) count++;
+            return count;
+        }
+
+        private static bool SetRatingWords(RhythmLane lane)
+        {
+            var art = LoadRatingArt();
+            bool words = System.Array.IndexOf(art, null) < 0;
+            bool combo = LoadComboArt(out var label, out var digits);
+            if (!words && !combo) return false;
+            Undo.RecordObject(lane, "Set rating words");
+            if (words) lane.ratingSprites = art;
+            if (combo)
+            {
+                lane.comboLabelSprite = label;
+                lane.comboDigitSprites = digits;
+            }
+            EditorUtility.SetDirty(lane);
+            return true;
+        }
+
+        /// <summary>UI/Combo_Label.png ("Combo x") and the digits UI/Combo_0.png ... Combo_9.png.</summary>
+        private static bool LoadComboArt(out Sprite label, out Sprite[] digits)
+        {
+            label = LoadButtonSprite("Combo_Label.png");
+            digits = new Sprite[10];
+            for (int i = 0; i < 10; i++) digits[i] = LoadButtonSprite("Combo_" + i + ".png");
+            return label != null && System.Array.IndexOf(digits, null) < 0;
+        }
+
         private static int SetPerformerAnimations(Scene scene)
         {
             int count = 0;
@@ -636,6 +886,8 @@ namespace PimbaStage.EditorTools
             player.fallFrames = LoadCharacterFrames("PerformerFall", 20f, PerformerPivot);  // going down (2 frames)
             player.hurtFrames = LoadCharacterFrames("PerformerHurt", 20f, PerformerPivot);
             player.doubleJumpFrames = LoadCharacterFrames("PerformerDoubleJump", 20f, PerformerPivot);
+            player.deathFrames = LoadCharacterFrames("PerformerDeath", 20f, PerformerPivot);
+            player.deathFps = PerformerDeathFps;
             player.idleFps = 1000f / 170f;  // frame times from the GIFs
             player.walkFps = 1000f / 170f;
             player.jumpFps = 10f;
@@ -1148,11 +1400,7 @@ namespace PimbaStage.EditorTools
             // ---------------- Playfield (left)
             var play = UIRect("Playfield", root, Vector2.zero, new Vector2(PlayfieldWidth, 1f));
 
-            Color[] lightColors =
-            {
-                new Color(1f, 0.95f, 0.8f), new Color(1f, 0.45f, 0.75f), new Color(0.4f, 0.9f, 1f),
-                new Color(1f, 0.7f, 0.3f), new Color(0.7f, 0.5f, 1f)
-            };
+            Color[] lightColors = LightColors;
             const int lightCount = 7;
             var beams = UIRect("Light Beams", play, Vector2.zero, Vector2.one);
             for (int i = 0; i < lightCount; i++)
@@ -1288,6 +1536,7 @@ namespace PimbaStage.EditorTools
             lane.laneReceptors = laneReceptors;
             lane.hitFlash = flashImg;
             lane.ratingText = rating;
+            SetRatingWords(lane); // AMAZING / GOOD / MEH / BAD / HORRIBLE drawn with the pixel art, if it's in the UI folder
             lane.comboText = combo;
             lane.modeText = modeText;
             lane.hitLineOffset = hitLine;
@@ -1299,6 +1548,9 @@ namespace PimbaStage.EditorTools
             if (singerPoses != null) SetSingerStage(singerPoses.GetComponent<SpriteFrameAnimator>(), game); // platform + skull health bar
 
             game.beatPulses = pulses.ToArray();
+
+            SetStageLights(game);      // the user's lamp, side by side across the stage, if it's in the UI folder
+            SetPanelBackground(panel); // the user's picture behind Player 2's panel, if it's in the UI folder
         }
 
         private static void BuildMainMenu(StageMenu menu, RectTransform play)

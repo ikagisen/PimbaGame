@@ -64,11 +64,14 @@ namespace PimbaStage
         public Rect loseTextArea = new Rect(0.075f, 0.10f, 0.82f, 0.50f);
         public Text resultsTitle;
         public Text resultsBody;
+        [Tooltip("Seconds the dead player's last frame stays on stage before the curtains close.")]
+        public float deathHold = 1.2f;
         public RectTransform curtainLeft;
         public RectTransform curtainRight;
         public BeatPulse[] beatPulses = new BeatPulse[0];
 
         private enum State { Menu, Countdown, Playing, Paused, Ended, Creator }
+        private enum Loser { None, Performer, Singer }
 
         private State state = State.Menu, stateBeforePause;
         private PimbaSong song;
@@ -76,7 +79,7 @@ namespace PimbaStage
         private float musicianHealth = 1f;
         private readonly int[] counts = new int[5];
         private bool won;
-        private float endTimer, curtainAmount = 1f, curtainTarget = 1f;
+        private float endTimer, curtainAmount = 1f, curtainTarget = 1f, deathSceneUntil;
         private bool layoutGameOver;
         private Image gameOverImage;
         private float leftOpenMax, rightOpenMin;
@@ -333,6 +336,11 @@ namespace PimbaStage
                     break;
 
                 case State.Ended:
+                    if (deathSceneUntil > 0f && Time.time >= deathSceneUntil)
+                    {
+                        deathSceneUntil = 0f;
+                        curtainTarget = 1f; // the death scene is over: curtains close, then the results
+                    }
                     if (resultsPanel != null && !resultsPanel.activeSelf && curtainAmount > 0.95f)
                     {
                         resultsPanel.SetActive(true);
@@ -443,7 +451,7 @@ namespace PimbaStage
             musicianHealth = Mathf.Clamp01(musicianHealth);
             scroller.Advance(j);
             UpdateHearts();
-            if (musicianHealth <= 0f) Finish(false, "Too many missed notes - the audience booed the band!");
+            if (musicianHealth <= 0f) Finish(false, "Too many missed notes - the audience booed the band!", Loser.Singer);
         }
 
         private void OnPlayerOut()
@@ -468,7 +476,9 @@ namespace PimbaStage
             player.PlayHurt();
             if (hearts <= 0)
             {
-                Finish(false, "The performer ran out of hearts!");
+                // Fell into a trapdoor or got squashed: back on solid ground first, so his death scene can be seen.
+                if (respawn) player.Respawn(scroller.FindSafeSpot());
+                Finish(false, "The performer ran out of hearts!", Loser.Performer);
                 return;
             }
 
@@ -492,7 +502,7 @@ namespace PimbaStage
             Finish(true, "The performer reached the spotlight!");
         }
 
-        private void Finish(bool success, string reason)
+        private void Finish(bool success, string reason, Loser loser = Loser.None)
         {
             if (state == State.Ended) return;
             state = State.Ended;
@@ -500,7 +510,11 @@ namespace PimbaStage
             lane.Stop();
             string chartPath = song != null && song.recordChart ? lane.SaveRecording(song) : null;
             conductor.FadeOut(success ? 4f : 1.5f);
-            curtainTarget = 1f;
+            // The player who lost plays their death scene first; the curtains close when it is over.
+            if (!success && scroller != null && scroller.cam != null) scroller.JumpTo(scroller.cam.transform.position.x); // the stage stops moving
+            float scene = success ? 0f : PlayDeathScene(loser);
+            deathSceneUntil = scene > 0f ? Time.time + scene + deathHold : 0f;
+            curtainTarget = scene > 0f ? curtainAmount : 1f;
             if (countdownText != null) countdownText.text = "";
 
             float accuracy = Accuracy(out _);
@@ -532,6 +546,19 @@ namespace PimbaStage
                 body += "\nENTER / R  play again        ESC  main menu";
                 resultsBody.text = body;
             }
+        }
+
+        /// <summary>Starts the death scene of the player who lost. Returns its length in seconds (0 = none).</summary>
+        private float PlayDeathScene(Loser loser)
+        {
+            if (loser == Loser.Performer) return player != null ? player.PlayDeath() : 0f;
+            if (loser == Loser.Singer)
+            {
+                var singer = lane != null && lane.transform.parent != null ? lane.transform.parent.GetComponentInChildren<SingerPoses>(true) : null;
+                if (singer == null) singer = FindAnyObjectByType<SingerPoses>();
+                return singer != null ? singer.PlayDeath() : 0f;
+            }
+            return 0f;
         }
 
         /// <summary>

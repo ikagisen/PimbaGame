@@ -65,8 +65,14 @@ namespace PimbaStage
         public float hurtFps = 7.1f;
         [Tooltip("Frames per second (the double jump GIF uses 130 ms per frame).")]
         public float doubleJumpFps = 7.7f;
+        [Tooltip("Death scene: plays once when he runs out of hearts, then he keeps the last frame (Characters/PerformerDeath_*).")]
+        public Sprite[] deathFrames = new Sprite[0];
+        [Tooltip("Frames per second (the death GIF uses 170 ms per frame).")]
+        public float deathFps = 5.9f;
 
         public bool ControlsEnabled { get; set; }
+        /// <summary>True once the death scene has started (his animation no longer follows what he does).</summary>
+        public bool Dead { get; private set; }
         public bool Invulnerable => Time.time < invulnerableUntil;
         /// <summary>True while the hurt animation is playing.</summary>
         public bool Hurting => hurtFrames != null && hurtFrames.Length > 0 && Time.time < hurtUntil;
@@ -235,6 +241,7 @@ namespace PimbaStage
         /// <summary>Picks the animation for what the performer is doing: hurt, jump, fall, walk or idle.</summary>
         private void Animate()
         {
+            if (Dead) return; // the death scene plays by itself
             float run = Mathf.Abs(rb.linearVelocity.x - carryVelocity.x);
             // A short grace time so a one-frame gap in the ground check doesn't flash the fall frames.
             bool airborne = !onGround && Time.time - lastGroundedTime > 0.06f;
@@ -296,6 +303,22 @@ namespace PimbaStage
 
         private static Sprite[] Either(Sprite[] first, Sprite[] second) =>
             first != null && first.Length > 0 ? first : second;
+
+        /// <summary>
+        /// Starts the death scene: plays the death frames once and keeps the last one.
+        /// Returns how long the frames take (0 when there is no death art, so the game carries on straight away).
+        /// </summary>
+        public float PlayDeath()
+        {
+            if (deathFrames == null || deathFrames.Length == 0 || animator == null) return 0f;
+            Dead = true;
+            ControlsEnabled = false;
+            hurtUntil = doubleJumpUntil = invulnerableUntil = 0f; // no blinking or hurt frames on top of it
+            squash = Vector2.one;
+            animator.SpeedMultiplier = 1f;
+            animator.Play(deathFrames, deathFps, true, false);
+            return deathFrames.Length / Mathf.Max(0.1f, deathFps);
+        }
 
         /// <summary>Plays the hurt animation once (called by the game when the performer loses a heart).</summary>
         public void PlayHurt()
@@ -373,6 +396,7 @@ namespace PimbaStage
         /// <summary>Little dance bounce on the beat when standing still.</summary>
         public void OnBeat()
         {
+            if (Dead) return;
             if (onGround && Mathf.Abs(rb.linearVelocity.x) < 0.5f) squash = new Vector2(1.12f, 0.88f);
         }
     }

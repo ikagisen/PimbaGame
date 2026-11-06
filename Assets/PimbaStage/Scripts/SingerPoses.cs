@@ -31,6 +31,11 @@ namespace PimbaStage
         [Tooltip("Seconds he holds the miss pose.")]
         public float missTime = 0.55f;
 
+        [Header("Death scene (Characters/SingerDeath_*): plays once when his health runs out, then he keeps the last frame")]
+        public Sprite[] deathFrames = new Sprite[0];
+        [Tooltip("Frames per second (the death GIF has no frame times, so 100 ms per frame, as browsers show it).")]
+        public float deathFps = 10f;
+
         [Header("Miss sound (Audio/Miss_*.wav, one picked at random)")]
         public AudioClip[] missSounds = new AudioClip[0];
         [Range(0f, 1f)] public float missVolume = 0.7f;
@@ -40,6 +45,9 @@ namespace PimbaStage
         private float poseUntil;
         private bool posing;
         private int lastSound = -1;
+
+        /// <summary>True once the death scene has started.</summary>
+        public bool Dead { get; private set; }
 
         private void Awake()
         {
@@ -64,11 +72,28 @@ namespace PimbaStage
 
         private void Update()
         {
+            if (Dead) return;
             if (posing && Time.time >= poseUntil) BackToIdle();
+        }
+
+        /// <summary>
+        /// Starts the death scene: plays the death frames once and keeps the last one.
+        /// Returns how long the frames take (0 when there is no death art).
+        /// </summary>
+        public float PlayDeath()
+        {
+            if (deathFrames == null || deathFrames.Length == 0 || animator == null) return 0f;
+            Dead = true;
+            posing = false;
+            animator.framesPerBeat = 0; // not locked to the music any more
+            animator.SpeedMultiplier = 1f;
+            animator.Play(deathFrames, deathFps, true, false);
+            return deathFrames.Length / Mathf.Max(0.1f, deathFps);
         }
 
         private void OnNoteJudged(ArrowDir dir, Judgement judgement)
         {
+            if (Dead) return;
             if (judgement == Judgement.Miss)
             {
                 Pose(missFrames, missTime);
